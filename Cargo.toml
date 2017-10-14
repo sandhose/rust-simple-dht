@@ -1,5 +1,5 @@
 [package]
-name = "rust-simple-dht"
+name = "simple_dht"
 version = "0.1.0"
 authors = ["Quentin Gliech <quentin.gliech@etu.unistra.fr>"]
 
