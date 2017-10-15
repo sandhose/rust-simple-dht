@@ -1,9 +1,12 @@
-use std::str;
-use std::fmt;
-use std::net::{UdpSocket, ToSocketAddrs, SocketAddr};
+use std::{str, fmt, io};
+use std::net::{self, ToSocketAddrs, SocketAddr};
 use std::io::Result as IOResult;
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
+
+use futures::{Future, Poll};
+use tokio_core::net::UdpSocket;
+use tokio_core::reactor::Handle;
 
 static TTL: u64 = 30;
 
@@ -47,16 +50,28 @@ pub struct Server {
     peers: HashMap<SocketAddr, Peer>,
 }
 
+impl Future for Server {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<(), io::Error> {
+        loop {
+            let (bytes, src) = try_nb!(self.socket.recv_from(&mut self.buffer.0));
+
+            self.remove_stale();
+            self.probe(src);
+
+            println!("Got {} bytes from {}: {:?}",
+                     bytes,
+                     src,
+                     &self.buffer.0[..bytes]);
+            println!("Peers: {:?}", self.peers);
+        }
+    }
+}
+
 impl Server {
     /// Create a server from a bound socket
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::net::UdpSocket;
-    /// use simple_dht::transport::Server;
-    /// Server::new(UdpSocket::bind("[::]:1234").unwrap());
-    /// ```
     pub fn new(socket: UdpSocket) -> Self {
         Server {
             socket: socket,
@@ -66,15 +81,9 @@ impl Server {
     }
 
     /// Try to create a new Server from an address
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use simple_dht::transport::Server;
-    /// Server::from_address("[::]:1234").unwrap();
-    /// ```
-    pub fn from_address<T: ToSocketAddrs>(address: T) -> IOResult<Self> {
-        let socket = UdpSocket::bind(address)?;
+    pub fn from_address<T: ToSocketAddrs>(address: &T, handle: &Handle) -> IOResult<Self> {
+        let socket = net::UdpSocket::bind(address)?;
+        let socket = UdpSocket::from_socket(socket, &handle)?;
         Ok(Server::new(socket))
     }
 
@@ -87,22 +96,5 @@ impl Server {
     /// Remove peers that timed out
     fn remove_stale(&mut self) {
         self.peers.retain(|_, peer| !peer.is_stale());
-    }
-
-    pub fn listen(&mut self) -> IOResult<()> {
-        loop {
-            let (bytes, src) = self.socket.recv_from(&mut self.buffer.0)?;
-
-            self.remove_stale();
-            self.probe(src);
-
-            self.socket.send_to(&self.buffer.0[..bytes], src)?;
-
-            println!("Got {} bytes from {}: {:?}",
-                     bytes,
-                     src,
-                     &self.buffer.0[..bytes]);
-            println!("Peers: {:?}", self.peers);
-        }
     }
 }
