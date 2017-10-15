@@ -76,7 +76,13 @@ impl Debug for Hash {
 }
 
 #[derive(Debug)]
-pub struct Payload(Vec<u8>);
+pub struct Payload(pub Vec<u8>);
+
+impl Default for Payload {
+    fn default() -> Self {
+        Payload(Vec::new())
+    }
+}
 
 impl Pushable for Payload {
     fn push_in_frame(&self, frame: &mut Vec<u8>) {

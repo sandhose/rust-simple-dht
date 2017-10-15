@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Quentin Gliech <quentin.gliech@etu.unistra.fr>"]
 
 [dependencies]
+clap = "^2.26"
