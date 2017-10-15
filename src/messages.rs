@@ -37,7 +37,7 @@ impl Hash {
                     return None;
                 }
             }
-            Some(Hash(hash))
+            Some(Hash::new(hash))
         } else {
             None
         }
