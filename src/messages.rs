@@ -1,11 +1,17 @@
-use std::fmt::{Debug, Formatter, Error};
+use std::error::Error;
+use std::fmt;
+use std::io;
+use std::marker::Sized;
+use std::net::SocketAddr;
 use std::str;
+use tokio_core::net::UdpCodec;
 
 pub trait Pushable {
     /// Push the value in the given frame
     fn push_in_frame(&self, frame: &mut Vec<u8>);
     /// Get the value length
     fn frame_len(&self) -> usize;
+    fn pull(buf: &[u8]) -> Result<Self, DecodeError> where Self: Sized;
 }
 
 const HASH_SIZE: usize = 8;
@@ -54,6 +60,10 @@ impl Hash {
     pub fn new(hash: [u8; HASH_SIZE]) -> Self {
         Hash(hash)
     }
+
+    pub fn from_slice(hash: &[u8]) -> Option<Self> {
+        hash.get(..HASH_SIZE).map(|h| Hash::new([h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]]))
+    }
 }
 
 impl Pushable for Hash {
@@ -64,10 +74,16 @@ impl Pushable for Hash {
     fn frame_len(&self) -> usize {
         HASH_SIZE as usize
     }
+
+    fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
+        buf.get(..HASH_SIZE)
+            .ok_or(DecodeError::MessageTooShort)
+            .map(|hash| Hash::from_slice(hash).unwrap())
+    }
 }
 
-impl Debug for Hash {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         for i in 0..HASH_SIZE {
             write!(f, "{:02x}", self.0[i])?;
         }
@@ -95,6 +111,14 @@ impl Pushable for Payload {
     fn frame_len(&self) -> usize {
         (self.0.len() + 2) as usize
     }
+
+    fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
+        let length = *try!(buf.get(0).ok_or(DecodeError::MessageTooShort)) as usize;
+        let data = try!(buf.get(1..length).ok_or(DecodeError::MessageTooShort));
+        let mut vec = Vec::with_capacity(length);
+        vec.extend_from_slice(data);
+        Ok(Payload(vec))
+    }
 }
 
 impl Pushable for u8 {
@@ -105,6 +129,10 @@ impl Pushable for u8 {
     fn frame_len(&self) -> usize {
         1
     }
+
+    fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
+        Ok(*try!(buf.get(0).ok_or(DecodeError::MessageTooShort)))
+    }
 }
 
 #[derive(Debug)]
@@ -113,28 +141,96 @@ pub enum Message {
     Put(Hash, Payload),
 }
 
+#[derive(Debug)]
+pub enum DecodeError {
+    MessageTooLong,
+    MessageTooShort,
+    InvalidMessageType,
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{}", Error::description(self))
+    }
+}
+
+impl Error for DecodeError {
+    fn description(&self) -> &str {
+        match *self {
+            DecodeError::MessageTooLong => "input message is too long",
+            DecodeError::MessageTooShort => "input message is too short",
+            DecodeError::InvalidMessageType => "message type unknown",
+        }
+    }
+}
+
+impl From<DecodeError> for io::Error {
+    fn from(src: DecodeError) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, src)
+    }
+}
+
+
+pub struct UdpMessage;
+
+impl UdpCodec for UdpMessage {
+    type In = (SocketAddr, Message);
+    type Out = (SocketAddr, Message);
+
+    fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
+        match Message::deserialize(&buf) {
+            Ok(msg) => Ok((*addr, msg)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn encode(&mut self, (addr, msg): Self::Out, buf: &mut Vec<u8>) -> SocketAddr {
+        buf.extend(msg.serialize());
+        addr
+    }
+}
+
 impl Message {
     pub fn serialize(&self) -> Vec<u8> {
         match *self {
             Message::Get(ref hash) => {
-                let id = self.type_identifier();
-                let mut msg = Vec::with_capacity(id.frame_len() + hash.frame_len());
+                let msg_type = self.type_identifier();
+                let mut msg = Vec::with_capacity(msg_type.frame_len() + hash.frame_len());
 
-                id.push_in_frame(&mut msg);
+                msg_type.push_in_frame(&mut msg);
                 hash.push_in_frame(&mut msg);
                 msg
             }
             Message::Put(ref hash, ref payload) => {
-                let id = self.type_identifier();
-                let mut msg = Vec::with_capacity(id.frame_len() + hash.frame_len() +
+                let msg_type = self.type_identifier();
+                let mut msg = Vec::with_capacity(msg_type.frame_len() + hash.frame_len() +
                                                  payload.frame_len());
 
-                id.push_in_frame(&mut msg);
+                msg_type.push_in_frame(&mut msg);
                 hash.push_in_frame(&mut msg);
                 payload.push_in_frame(&mut msg);
                 msg
             }
         }
+    }
+
+    fn deserialize(buf: &[u8]) -> Result<Self, DecodeError> {
+        let id = try!(u8::pull(buf));
+
+        let msg = match id {
+            0 => {
+                let hash = try!(Hash::pull(&buf[1..]));
+                Message::Get(hash)
+            }
+            1 => {
+                let hash = try!(Hash::pull(&buf[1..]));
+                let payload = try!(Payload::pull(&buf[(1 + HASH_SIZE)..]));
+                Message::Put(hash, payload)
+            }
+            _ => return Err(DecodeError::InvalidMessageType),
+        };
+
+        Ok(msg)
     }
 
     fn type_identifier(&self) -> u8 {
