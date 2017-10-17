@@ -1,16 +1,21 @@
 #[macro_use]
 extern crate clap;
 extern crate tokio_core;
+extern crate futures;
 
 extern crate simple_dht;
 
+use std::io::{self, Write};
 use tokio_core::reactor::Core;
-use std::net::ToSocketAddrs;
+use tokio_core::net::{UdpFramed, UdpSocket};
+use futures::{Future, Stream};
+use std::net::SocketAddr;
 use simple_dht::messages::{Hash, Message, Payload};
-use simple_dht::transport::Server;
+use simple_dht::server::connect;
+use simple_dht::state::ServerState;
 
 fn valid_host(input: String) -> Result<(), String> {
-    match input.as_str().to_socket_addrs() {
+    match input.as_str().parse::<SocketAddr>() {
         Ok(_) => Ok(()),
         Err(ref e) => Err(format!("{}", e)),
     }
@@ -50,18 +55,22 @@ fn main() {
 
     if let Some(cmd) = matches.subcommand_matches("get") {
         let msg = Message::Get(Hash::from_hex(cmd.value_of("HASH").unwrap()).unwrap());
-        println!("{:?}", msg);
-        println!("{:?}", msg.serialize());
+        io::stdout().write(&msg.serialize()[..]).unwrap();
     } else if let Some(cmd) = matches.subcommand_matches("put") {
         let msg = Message::Put(Hash::from_hex(cmd.value_of("HASH").unwrap()).unwrap(),
                                Payload(cmd.value_of("PAYLOAD").unwrap().as_bytes().to_vec()));
-        println!("{:?}", msg);
-        println!("{:?}", msg.serialize());
+        io::stdout().write(&msg.serialize()[..]).unwrap();
     } else if let Some(_) = matches.subcommand_matches("server") {
         let mut l = Core::new().unwrap();
         let handle = l.handle();
-        let server = Server::from_address(&matches.value_of("CONNECT").unwrap(), &handle).unwrap();
-        println!("{:?}", server);
-        l.run(server).unwrap();
+        let state = ServerState::new();
+        println!("{:?}", state);
+        let addr = &matches.value_of("CONNECT").unwrap().parse::<SocketAddr>().unwrap();
+        let stream = connect(&addr, &handle, state);
+        l.run(stream.for_each(|(src, msg)| {
+                println!("Got message from {}: {:?}", src, msg);
+                Ok(())
+            }))
+            .unwrap();
     }
 }

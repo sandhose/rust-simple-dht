@@ -103,7 +103,7 @@ impl Default for Payload {
 impl Pushable for Payload {
     fn push_in_frame(&self, frame: &mut Vec<u8>) {
         let len = self.0.len();
-        frame.push((len << 8) as u8);
+        frame.push((len >> 8) as u8);
         frame.push(len as u8);
         frame.extend(&self.0);
     }
@@ -113,9 +113,10 @@ impl Pushable for Payload {
     }
 
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
-        let length = *try!(buf.get(0).ok_or(DecodeError::MessageTooShort)) as usize;
-        let data = try!(buf.get(1..length).ok_or(DecodeError::MessageTooShort));
-        let mut vec = Vec::with_capacity(length);
+        let length = try!(buf.get(0..2).ok_or(DecodeError::MessageTooShort));
+        let length = ((length[0] as u64) << 8) + (length[1] as u64);
+        let data = try!(buf.get(2..(2 + length as usize)).ok_or(DecodeError::MessageTooShort));
+        let mut vec = Vec::with_capacity(length as usize);
         vec.extend_from_slice(data);
         Ok(Payload(vec))
     }
