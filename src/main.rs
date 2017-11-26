@@ -7,12 +7,9 @@ extern crate simple_dht;
 
 use std::io::{self, Write};
 use tokio_core::reactor::Core;
-use tokio_core::net::{UdpFramed, UdpSocket};
-use futures::{Future, Stream};
 use std::net::SocketAddr;
 use simple_dht::messages::{Hash, Message, Payload};
-use simple_dht::server::connect;
-use simple_dht::state::ServerState;
+use simple_dht::server::Server;
 
 fn valid_host(input: String) -> Result<(), String> {
     match input.as_str().parse::<SocketAddr>() {
@@ -63,14 +60,11 @@ fn main() {
     } else if let Some(_) = matches.subcommand_matches("server") {
         let mut l = Core::new().unwrap();
         let handle = l.handle();
-        let state = ServerState::new();
-        println!("{:?}", state);
-        let addr = &matches.value_of("CONNECT").unwrap().parse::<SocketAddr>().unwrap();
-        let stream = connect(&addr, &handle, state);
-        l.run(stream.for_each(|(src, msg)| {
-                println!("Got message from {}: {:?}", src, msg);
-                Ok(())
-            }))
+        let addr = &matches.value_of("CONNECT")
+            .unwrap()
+            .parse::<SocketAddr>()
             .unwrap();
+        let server = Server::from_addr(&addr, &handle).unwrap();
+        l.run(server.run()).unwrap();
     }
 }

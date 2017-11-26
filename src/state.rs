@@ -1,8 +1,9 @@
 use std::net::SocketAddr;
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
+use std::cell::RefCell;
 
-static TTL: u64 = 30;
+static TTL: u64 = 10;
 
 #[derive(Debug, Clone)]
 struct Peer {
@@ -23,25 +24,27 @@ impl Peer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ServerState {
-    peers: HashMap<SocketAddr, Peer>,
+    peers: RefCell<HashMap<SocketAddr, Peer>>,
 }
 
 impl ServerState {
     /// Create a server from a bound socket
     pub fn new() -> Self {
-        ServerState { peers: HashMap::new() }
+        ServerState { peers: RefCell::new(HashMap::new()) }
     }
 
     /// Mark a socket as active
-    fn probe(&mut self, src: SocketAddr) {
-        let peer = self.peers.entry(src).or_insert_with(Peer::new);
+    pub fn probe(&self, src: SocketAddr) {
+        let mut peers = self.peers.borrow_mut();
+        let peer = peers.entry(src).or_insert_with(Peer::new);
         peer.probe();
     }
 
     /// Remove peers that timed out
-    fn remove_stale(&mut self) {
-        self.peers.retain(|_, peer| !peer.is_stale());
+    pub fn remove_stale(&self) {
+        let mut peers = self.peers.borrow_mut();
+        peers.retain(|_, peer| !peer.is_stale());
     }
 }
