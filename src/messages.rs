@@ -91,7 +91,7 @@ impl fmt::Debug for Hash {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Payload(pub Vec<u8>);
 
 impl Default for Payload {
@@ -136,10 +136,11 @@ impl Pushable for u8 {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Message {
     Get(Hash),
     Put(Hash, Payload),
+    KeepAlive,
 }
 
 #[derive(Debug)]
@@ -212,6 +213,12 @@ impl Message {
                 payload.push_in_frame(&mut msg);
                 msg
             }
+            Message::KeepAlive => {
+                let msg_type = self.type_identifier();
+                let mut msg = Vec::with_capacity(msg_type.frame_len());
+                msg_type.push_in_frame(&mut msg);
+                msg
+            }
         }
     }
 
@@ -238,6 +245,7 @@ impl Message {
         match *self {
             Message::Get(_) => 0,
             Message::Put(_, _) => 1,
+            Message::KeepAlive => 2,
         }
     }
 }

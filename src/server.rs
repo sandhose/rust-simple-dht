@@ -3,9 +3,10 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::{Sink, Stream, Future};
+use futures::stream;
 use tokio_core::net::{UdpFramed, UdpSocket};
 use tokio_core::reactor::Handle;
-use tokio_timer::Timer;
+use tokio_timer::{Timer, TimerError};
 
 
 use messages::UdpMessage;
@@ -30,12 +31,13 @@ impl Server {
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
         let timer_state = self.state.clone();
-        let timer_stream = interval.filter_map(move |_| {
-            println!("Tick. {:?}", timer_state);
-            timer_state.remove_stale();
-            None
-        });
-        let timer_stream = timer_stream.map_err(|e| io::Error::from(e));
+        let timer_stream = interval.map(move |_| {
+                println!("Tick. {:?}", timer_state);
+                timer_state.remove_stale();
+                stream::iter_ok(timer_state.keep_alive())
+            })
+            .flatten();
+        let timer_stream = timer_stream.map_err(|e: TimerError| io::Error::from(e));
 
         let server_state = self.state.clone();
         let server_stream = stream.filter_map(move |(src, msg)| {

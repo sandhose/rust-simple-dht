@@ -3,6 +3,8 @@ use std::time::{Instant, Duration};
 use std::collections::HashMap;
 use std::cell::RefCell;
 
+use messages::Message;
+
 static TTL: u64 = 10;
 
 #[derive(Debug, Clone)]
@@ -46,5 +48,9 @@ impl ServerState {
     pub fn remove_stale(&self) {
         let mut peers = self.peers.borrow_mut();
         peers.retain(|_, peer| !peer.is_stale());
+    }
+
+    pub fn keep_alive(&self) -> Vec<(SocketAddr, Message)> {
+        self.peers.borrow().keys().map(|s| (s.clone(), Message::KeepAlive)).collect()
     }
 }
