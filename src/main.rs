@@ -10,6 +10,7 @@ use tokio_core::reactor::Core;
 use std::net::SocketAddr;
 use simple_dht::messages::{Hash, Message, Payload};
 use simple_dht::server::Server;
+use simple_dht::client;
 
 fn valid_host(input: String) -> Result<(), String> {
     match input.as_str().parse::<SocketAddr>() {
@@ -49,22 +50,25 @@ fn main() {
     )
         .get_matches();
 
+    let addr = &matches.value_of("CONNECT")
+        .unwrap()
+        .parse::<SocketAddr>()
+        .unwrap();
+    let mut core = Core::new().unwrap();
 
     if let Some(cmd) = matches.subcommand_matches("get") {
         let msg = Message::Get(Hash::from_hex(cmd.value_of("HASH").unwrap()).unwrap());
-        io::stdout().write(&msg.serialize()[..]).unwrap();
+        let future = client::request(&addr, msg, &core.handle());
+        let resp = core.run(future).unwrap();
+        println!("{:?}", resp);
     } else if let Some(cmd) = matches.subcommand_matches("put") {
         let msg = Message::Put(Hash::from_hex(cmd.value_of("HASH").unwrap()).unwrap(),
                                Payload(cmd.value_of("PAYLOAD").unwrap().as_bytes().to_vec()));
-        io::stdout().write(&msg.serialize()[..]).unwrap();
+        let future = client::request(&addr, msg, &core.handle());
+        let resp = core.run(future).unwrap();
+        println!("{:?}", resp);
     } else if let Some(_) = matches.subcommand_matches("server") {
-        let mut l = Core::new().unwrap();
-        let handle = l.handle();
-        let addr = &matches.value_of("CONNECT")
-            .unwrap()
-            .parse::<SocketAddr>()
-            .unwrap();
-        let server = Server::from_addr(&addr, &handle).unwrap();
-        l.run(server.run()).unwrap();
+        let server = Server::from_addr(&addr, &core.handle()).unwrap();
+        core.run(server.run()).unwrap();
     }
 }
