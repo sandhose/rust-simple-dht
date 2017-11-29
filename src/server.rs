@@ -33,7 +33,7 @@ impl Server {
         let timer_state = self.state.clone();
         let timer_stream = interval.map(move |_| {
                 println!("Tick. {:?}", timer_state);
-                timer_state.remove_stale();
+                timer_state.drop_stale();
                 stream::iter_ok(timer_state.keep_alive())
             })
             .flatten();
@@ -42,7 +42,7 @@ impl Server {
         let server_state = self.state.clone();
         let server_stream = stream.filter_map(move |(src, msg)| {
             println!("Got message from {}: {:?}", src, msg);
-            server_state.probe(src);
+            server_state.probe_peer(src);
             Some((src, msg))
         });
 

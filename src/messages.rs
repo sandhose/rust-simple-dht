@@ -15,7 +15,7 @@ pub trait Pushable {
 }
 
 const HASH_SIZE: usize = 8;
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {

@@ -5,7 +5,6 @@ extern crate futures;
 
 extern crate simple_dht;
 
-use std::io::{self, Write};
 use tokio_core::reactor::Core;
 use std::net::SocketAddr;
 use simple_dht::messages::{Hash, Message, Payload};
