@@ -9,7 +9,7 @@ use tokio_core::reactor::Handle;
 use tokio_timer::{Timer, TimerError};
 
 
-use messages::UdpMessage;
+use messages::{UdpMessage, Message, Payload};
 use state::ServerState;
 
 pub struct Server {
@@ -43,7 +43,19 @@ impl Server {
         let server_stream = stream.filter_map(move |(src, msg)| {
             println!("Got message from {}: {:?}", src, msg);
             server_state.probe_peer(src);
-            Some((src, msg))
+
+            match msg {
+                Message::Get(hash) => {
+                    server_state.get(hash.clone())
+                        .map(|content| (src, Message::Put(hash, Payload(content))))
+                }
+                Message::Put(hash, Payload(p)) => {
+                    server_state.put(hash.clone(), p);
+                    Some((src, Message::IHave(hash)))
+                }
+
+                _ => None,
+            }
         });
 
         let combined_stream = server_stream.select(timer_stream);

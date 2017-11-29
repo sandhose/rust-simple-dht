@@ -33,10 +33,10 @@ struct Content {
 }
 
 impl Content {
-    fn from_buffer(data: &[u8]) -> Self {
+    fn from_buffer(data: Vec<u8>) -> Self {
         Content {
             pushed: Instant::now(),
-            data: Vec::from(data),
+            data: data,
         }
     }
 
@@ -60,7 +60,7 @@ impl ServerState {
         }
     }
 
-    pub fn put(&self, hash: Hash, data: &[u8]) {
+    pub fn put(&self, hash: Hash, data: Vec<u8>) {
         let mut hashes = self.hashes.borrow_mut();
         hashes.insert(hash, Content::from_buffer(data));
     }
@@ -100,10 +100,10 @@ mod tests {
     fn store_hashes() {
         let state = ServerState::new();
         let hash = Hash::from_hex("0123456789abcdef").unwrap();
-        let content = [24, 8, 42, 12];
+        let content = vec![24, 8, 42, 12];
         assert_eq!(state.get(hash.clone()), None);
 
-        state.put(hash.clone(), &content);
-        assert_eq!(state.get(hash.clone()), Some(Vec::from(&content[..])));
+        state.put(hash.clone(), content.clone());
+        assert_eq!(state.get(hash), Some(content));
     }
 }

@@ -141,6 +141,7 @@ pub enum Message {
     Get(Hash),
     Put(Hash, Payload),
     KeepAlive,
+    IHave(Hash),
 }
 
 #[derive(Debug)]
@@ -219,6 +220,14 @@ impl Message {
                 msg_type.push_in_frame(&mut msg);
                 msg
             }
+            Message::IHave(ref hash) => {
+                let msg_type = self.type_identifier();
+                let mut msg = Vec::with_capacity(msg_type.frame_len() + hash.frame_len());
+
+                msg_type.push_in_frame(&mut msg);
+                hash.push_in_frame(&mut msg);
+                msg
+            }
         }
     }
 
@@ -235,6 +244,11 @@ impl Message {
                 let payload = try!(Payload::pull(&buf[(1 + HASH_SIZE)..]));
                 Message::Put(hash, payload)
             }
+            2 => Message::KeepAlive,
+            3 => {
+                let hash = try!(Hash::pull(&buf[1..]));
+                Message::IHave(hash)
+            }
             _ => return Err(DecodeError::InvalidMessageType),
         };
 
@@ -246,6 +260,7 @@ impl Message {
             Message::Get(_) => 0,
             Message::Put(_, _) => 1,
             Message::KeepAlive => 2,
+            Message::IHave(_) => 3,
         }
     }
 }
