@@ -1,31 +1,16 @@
-use std::net::SocketAddr;
+use std::io;
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
 use std::cell::RefCell;
-use futures::stream::{iter_ok, Stream};
+use std::sync::Arc;
+use futures::stream::iter_ok;
+use futures::{Stream, Future, future};
+use futures::sync::mpsc::{Sender, Receiver, TrySendError, channel};
+use tokio_timer::{Timer, TimerError};
 
 use messages::{Message, Hash, Payload};
 
 static TTL: u64 = 10;
-
-#[derive(Debug, Clone)]
-struct Peer {
-    last_seen: Instant,
-}
-
-impl Peer {
-    fn new() -> Self {
-        Peer { last_seen: Instant::now() }
-    }
-
-    fn probe(&mut self) {
-        self.last_seen = Instant::now();
-    }
-
-    fn is_stale(&self) -> bool {
-        self.last_seen.elapsed() > Duration::from_secs(TTL)
-    }
-}
 
 #[derive(Debug, Clone)]
 struct Content {
@@ -46,9 +31,28 @@ impl Content {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
+struct Listeners(Vec<Sender<Message>>);
+
+impl Listeners {
+    pub fn broadcast(&mut self, msg: &Message) -> Result<(), TrySendError<Message>> {
+        for listener in self.0.as_mut_slice() {
+            listener.try_send(msg.clone())?;
+        }
+
+        Ok(())
+    }
+
+    pub fn subscribe(&mut self) -> Receiver<Message> {
+        let (sender, receiver) = channel(1);
+        self.0.push(sender);
+        receiver
+    }
+}
+
+#[derive(Default)]
 pub struct ServerState {
-    peers: RefCell<HashMap<SocketAddr, Peer>>,
+    listeners: Arc<RefCell<Listeners>>,
     hashes: RefCell<HashMap<Hash, Content>>,
 }
 
@@ -74,34 +78,35 @@ impl ServerState {
         }
     }
 
-    pub fn put(&self, hash: &Hash, data: Vec<u8>) {
+    pub fn broadcast(&self, msg: &Message) -> Result<(), TrySendError<Message>> {
+        self.listeners.borrow_mut().broadcast(msg)
+    }
+
+    pub fn subscribe(&self) -> Receiver<Message> {
+        self.listeners.borrow_mut().subscribe()
+    }
+
+    fn put(&self, hash: &Hash, data: Vec<u8>) {
         let mut hashes = self.hashes.borrow_mut();
         hashes.insert(*hash, Content::from_buffer(data));
     }
 
-    pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
+    fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
         let hashes = self.hashes.borrow();
         hashes.get(hash).map(|content| content.data.clone())
     }
 
-    /// Mark a socket as active
-    pub fn probe_peer(&self, src: SocketAddr) {
-        let mut peers = self.peers.borrow_mut();
-        let peer = peers.entry(src).or_insert_with(Peer::new);
-        peer.probe();
-    }
-
-    /// Remove peers that timed out
-    pub fn drop_stale(&self) {
-        let mut peers = self.peers.borrow_mut();
-        peers.retain(|_, peer| !peer.is_stale());
-
-        let mut hashes = self.hashes.borrow_mut();
-        hashes.retain(|_, hash| !hash.is_stale());
-    }
-
-    pub fn keep_alive(&self) -> Vec<(SocketAddr, Message)> {
-        self.peers.borrow().keys().map(|s| (*s, Message::KeepAlive)).collect()
+    pub fn run(&self) -> Box<Future<Item = (), Error = io::Error>> {
+        let listeners = Arc::clone(&self.listeners);
+        let timer = Timer::default();
+        let interval = timer.interval(Duration::from_secs(1));
+        let timer_stream = interval.map_err(TimerError::into)
+            .and_then(move |_| {
+                listeners.borrow_mut()
+                    .broadcast(&Message::KeepAlive)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            });
+        Box::new(timer_stream.for_each(|_| future::ok(())))
     }
 }
 
