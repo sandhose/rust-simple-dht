@@ -11,7 +11,8 @@ pub fn request(&server: &SocketAddr,
                msg: Message,
                handle: &Handle)
                -> Box<Future<Item = Message, Error = io::Error>> {
-    let bind: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    // TODO: Bind on v4 or v6 depending on server address
+    let bind: SocketAddr = "[::]:0".parse().unwrap();
     let socket = match UdpSocket::bind(&bind, handle) {
         Ok(s) => s,
         Err(e) => return Box::new(Err(e).into_future()),

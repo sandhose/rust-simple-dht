@@ -114,7 +114,7 @@ impl Pushable for Payload {
 
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
         let length = try!(buf.get(0..2).ok_or(DecodeError::MessageTooShort));
-        let length = ((length[0] as u64) << 8) + (length[1] as u64);
+        let length = (u64::from(length[0]) << 8) + u64::from(length[1]);
         let data = try!(buf.get(2..(2 + length as usize)).ok_or(DecodeError::MessageTooShort));
         let mut vec = Vec::with_capacity(length as usize);
         vec.extend_from_slice(data);
@@ -193,41 +193,28 @@ impl UdpCodec for UdpMessage {
     }
 }
 
+macro_rules! build_msg {
+    ($( $x:expr ),*) => ({
+        let mut size = 0;
+        $(
+            size += $x.frame_len();
+        )*
+        let mut msg = Vec::with_capacity(size);
+        $(
+            $x.push_in_frame(&mut msg);
+        )*
+        msg
+    })
+}
+
 impl Message {
     pub fn serialize(&self) -> Vec<u8> {
+        let id = self.type_identifier();
         match *self {
-            Message::Get(ref hash) => {
-                let msg_type = self.type_identifier();
-                let mut msg = Vec::with_capacity(msg_type.frame_len() + hash.frame_len());
-
-                msg_type.push_in_frame(&mut msg);
-                hash.push_in_frame(&mut msg);
-                msg
-            }
-            Message::Put(ref hash, ref payload) => {
-                let msg_type = self.type_identifier();
-                let mut msg = Vec::with_capacity(msg_type.frame_len() + hash.frame_len() +
-                                                 payload.frame_len());
-
-                msg_type.push_in_frame(&mut msg);
-                hash.push_in_frame(&mut msg);
-                payload.push_in_frame(&mut msg);
-                msg
-            }
-            Message::KeepAlive => {
-                let msg_type = self.type_identifier();
-                let mut msg = Vec::with_capacity(msg_type.frame_len());
-                msg_type.push_in_frame(&mut msg);
-                msg
-            }
-            Message::IHave(ref hash) => {
-                let msg_type = self.type_identifier();
-                let mut msg = Vec::with_capacity(msg_type.frame_len() + hash.frame_len());
-
-                msg_type.push_in_frame(&mut msg);
-                hash.push_in_frame(&mut msg);
-                msg
-            }
+            Message::Get(ref hash) => build_msg!(id, hash),
+            Message::Put(ref hash, ref payload) => build_msg!(id, hash, payload),
+            Message::KeepAlive => build_msg!(id),
+            Message::IHave(ref hash) => build_msg!(id, hash),
         }
     }
 

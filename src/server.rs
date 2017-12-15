@@ -21,7 +21,7 @@ impl Server {
     pub fn from_addr(&addr: &SocketAddr, handle: &Handle) -> io::Result<Self> {
         Ok(Server {
             socket: UdpSocket::bind(&addr, handle)?.framed(UdpMessage),
-            state: Arc::new(ServerState::new()),
+            state: Arc::default(),
         })
     }
 
@@ -30,27 +30,27 @@ impl Server {
 
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
-        let timer_state = self.state.clone();
+        let state = Arc::clone(&self.state);
         let timer_stream = interval.map(move |_| {
-                println!("Tick. {:?}", timer_state);
-                timer_state.drop_stale();
-                stream::iter_ok(timer_state.keep_alive())
+                println!("Tick. {:?}", state);
+                state.drop_stale();
+                stream::iter_ok(state.keep_alive())
             })
             .flatten();
-        let timer_stream = timer_stream.map_err(|e: TimerError| io::Error::from(e));
+        let timer_stream = timer_stream.map_err(TimerError::into);
 
-        let server_state = self.state.clone();
+        let state = Arc::clone(&self.state);
         let server_stream = stream.filter_map(move |(src, msg)| {
             println!("Got message from {}: {:?}", src, msg);
-            server_state.probe_peer(src);
+            state.probe_peer(src);
 
             match msg {
                 Message::Get(hash) => {
-                    server_state.get(hash.clone())
+                    state.get(&hash)
                         .map(|content| (src, Message::Put(hash, Payload(content))))
                 }
                 Message::Put(hash, Payload(p)) => {
-                    server_state.put(hash.clone(), p);
+                    state.put(&hash, p);
                     Some((src, Message::IHave(hash)))
                 }
 

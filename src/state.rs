@@ -22,7 +22,7 @@ impl Peer {
     }
 
     fn is_stale(&self) -> bool {
-        self.last_seen.elapsed().clone() > Duration::from_secs(TTL)
+        self.last_seen.elapsed() > Duration::from_secs(TTL)
     }
 }
 
