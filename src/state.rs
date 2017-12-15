@@ -41,33 +41,25 @@ impl Content {
     }
 
     fn is_stale(&self) -> bool {
-        self.pushed.elapsed().clone() > Duration::from_secs(TTL)
+        self.pushed.elapsed() > Duration::from_secs(TTL)
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerState {
     peers: RefCell<HashMap<SocketAddr, Peer>>,
     hashes: RefCell<HashMap<Hash, Content>>,
 }
 
 impl ServerState {
-    /// Create a server from a bound socket
-    pub fn new() -> Self {
-        ServerState {
-            peers: RefCell::new(HashMap::new()),
-            hashes: RefCell::new(HashMap::new()),
-        }
-    }
-
-    pub fn put(&self, hash: Hash, data: Vec<u8>) {
+    pub fn put(&self, hash: &Hash, data: Vec<u8>) {
         let mut hashes = self.hashes.borrow_mut();
-        hashes.insert(hash, Content::from_buffer(data));
+        hashes.insert(*hash, Content::from_buffer(data));
     }
 
-    pub fn get(&self, hash: Hash) -> Option<Vec<u8>> {
+    pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
         let hashes = self.hashes.borrow();
-        hashes.get(&hash).map(|content| content.data.clone())
+        hashes.get(hash).map(|content| content.data.clone())
     }
 
     /// Mark a socket as active
@@ -87,7 +79,7 @@ impl ServerState {
     }
 
     pub fn keep_alive(&self) -> Vec<(SocketAddr, Message)> {
-        self.peers.borrow().keys().map(|s| (s.clone(), Message::KeepAlive)).collect()
+        self.peers.borrow().keys().map(|s| (*s, Message::KeepAlive)).collect()
     }
 }
 
@@ -98,7 +90,7 @@ mod tests {
 
     #[test]
     fn store_hashes() {
-        let state = ServerState::new();
+        let state = ServerState::default();
         let hash = Hash::from_hex("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
         assert_eq!(state.get(hash.clone()), None);

@@ -15,7 +15,7 @@ pub trait Pushable {
 }
 
 const HASH_SIZE: usize = 8;
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -181,7 +181,7 @@ impl UdpCodec for UdpMessage {
     type Out = (SocketAddr, Message);
 
     fn decode(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        match Message::deserialize(&buf) {
+        match Message::deserialize(buf) {
             Ok(msg) => Ok((*addr, msg)),
             Err(e) => Err(e.into()),
         }

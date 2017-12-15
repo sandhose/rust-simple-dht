@@ -8,12 +8,13 @@ extern crate simple_dht;
 use clap::ArgMatches;
 use tokio_core::reactor::Core;
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use simple_dht::messages::{Hash, Message, Payload};
 use simple_dht::server::Server;
 use simple_dht::client;
 
 fn valid_host(input: String) -> Result<(), String> {
-    match input.as_str().parse::<SocketAddr>() {
+    match input.as_str().to_socket_addrs() {
         Ok(_) => Ok(()),
         Err(ref e) => Err(format!("{}", e)),
     }
@@ -32,13 +33,14 @@ enum Args {
 }
 
 impl Args {
-    fn from_matches(matches: ArgMatches) -> Option<Self> {
-        let addr = &matches.value_of("CONNECT")?
-            .parse::<SocketAddr>()
-            .ok()?;
+    fn from_matches(matches: &ArgMatches) -> Option<Self> {
+        let addr = matches.value_of("CONNECT")?
+            .to_socket_addrs()
+            .ok()?
+            .next()?;
 
-        if let Some(_) = matches.subcommand_matches("server") {
-            Some(Args::Server(*addr))
+        if matches.subcommand_matches("server").is_some() {
+            Some(Args::Server(addr))
         } else {
             let msg = if let Some(m) = matches.subcommand_matches("get") {
                 Message::Get(Hash::from_hex(m.value_of("HASH")?)?)
@@ -50,7 +52,7 @@ impl Args {
                 return None;
             };
 
-            Some(Args::Client(*addr, msg))
+            Some(Args::Client(addr, msg))
         }
     }
 }
@@ -80,7 +82,7 @@ fn main() {
         .get_matches();
 
     let mut core = Core::new().unwrap();
-    match Args::from_matches(matches).unwrap() {
+    match Args::from_matches(&matches).unwrap() {
         Args::Server(addr) => {
             let server = Server::from_addr(&addr, &core.handle()).unwrap();
             core.run(server.run()).unwrap()
