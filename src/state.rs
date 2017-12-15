@@ -2,8 +2,9 @@ use std::net::SocketAddr;
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
 use std::cell::RefCell;
+use futures::stream::{iter_ok, Stream};
 
-use messages::{Message, Hash};
+use messages::{Message, Hash, Payload};
 
 static TTL: u64 = 10;
 
@@ -52,6 +53,27 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    /// Process a Message, returning a Stream of Messages to respond
+    pub fn process(&self, msg: Message) -> Box<Stream<Item = Message, Error = ()>> {
+        let opt = match msg {
+            Message::Get(hash) => {
+                self.get(&hash).map(|content| Message::Put(hash, Payload(content)))
+            }
+            Message::Put(hash, Payload(p)) => {
+                self.put(&hash, p);
+                Some(Message::IHave(hash))
+            }
+            _ => None,
+        };
+
+        // TODO: error handling
+        if let Some(out) = opt {
+            Box::new(iter_ok(vec![out]))
+        } else {
+            Box::new(iter_ok(Vec::new()))
+        }
+    }
+
     pub fn put(&self, hash: &Hash, data: Vec<u8>) {
         let mut hashes = self.hashes.borrow_mut();
         hashes.insert(*hash, Content::from_buffer(data));
@@ -86,16 +108,44 @@ impl ServerState {
 #[cfg(test)]
 mod tests {
     use super::ServerState;
-    use messages::Hash;
+    use futures::Async;
+    use messages::{Message, Payload, Hash};
 
     #[test]
     fn store_hashes() {
         let state = ServerState::default();
         let hash = Hash::from_hex("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
-        assert_eq!(state.get(hash.clone()), None);
+        assert_eq!(state.get(&hash.clone()), None);
 
-        state.put(hash.clone(), content.clone());
-        assert_eq!(state.get(hash), Some(content));
+        state.put(&hash.clone(), content.clone());
+        assert_eq!(state.get(&hash), Some(content));
+    }
+
+    #[test]
+    fn process_messages() {
+        let state = ServerState::default();
+        let hash = Hash::from_hex("0123456789abcdef").unwrap();
+        let content = vec![24, 8, 42, 12];
+
+        // `Put` should yield a `IHave` message
+        let mut stream = state.process(Message::Put(hash.clone(), Payload(content.clone())));
+        let expected = Message::IHave(hash.clone());
+        assert_eq!(stream.poll(), Ok(Async::Ready(Some(expected))));
+        assert_eq!(stream.poll(), Ok(Async::Ready(None)));
+
+        // `Get` should yield a `Put` message
+        let mut stream = state.process(Message::Get(hash.clone()));
+        let expected = Message::Put(hash.clone(), Payload(content.clone()));
+        assert_eq!(stream.poll(), Ok(Async::Ready(Some(expected))));
+        assert_eq!(stream.poll(), Ok(Async::Ready(None)));
+
+        // `IHave` shouldn't do anything
+        let mut stream = state.process(Message::IHave);
+        assert_eq!(stream.poll(), Ok(Async::Ready(None)));
+
+        // `KeepAlive` shouldn't do anything
+        let mut stream = state.process(Message::KeepAlive);
+        assert_eq!(stream.poll(), Ok(Async::Ready(None)));
     }
 }

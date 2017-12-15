@@ -7,4 +7,4 @@ authors = ["Quentin Gliech <quentin.gliech@etu.unistra.fr>"]
 clap = "2.26.2"
 tokio-core = "0.1.10"
 tokio-timer = "0.1.2"
-futures = "0.1.16"
+futures = "0.1.17"

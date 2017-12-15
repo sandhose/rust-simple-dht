@@ -91,7 +91,7 @@ impl fmt::Debug for Hash {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Payload(pub Vec<u8>);
 
 impl Default for Payload {
@@ -136,7 +136,7 @@ impl Pushable for u8 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Message {
     Get(Hash),
     Put(Hash, Payload),

@@ -9,7 +9,7 @@ use tokio_core::reactor::Handle;
 use tokio_timer::{Timer, TimerError};
 
 
-use messages::{UdpMessage, Message, Payload};
+use messages::UdpMessage;
 use state::ServerState;
 
 pub struct Server {
@@ -40,23 +40,14 @@ impl Server {
         let timer_stream = timer_stream.map_err(TimerError::into);
 
         let state = Arc::clone(&self.state);
-        let server_stream = stream.filter_map(move |(src, msg)| {
-            println!("Got message from {}: {:?}", src, msg);
-            state.probe_peer(src);
-
-            match msg {
-                Message::Get(hash) => {
-                    state.get(&hash)
-                        .map(|content| (src, Message::Put(hash, Payload(content))))
-                }
-                Message::Put(hash, Payload(p)) => {
-                    state.put(&hash, p);
-                    Some((src, Message::IHave(hash)))
-                }
-
-                _ => None,
-            }
-        });
+        let server_stream = stream.map(move |(src, msg)| {
+                println!("Got message from {}: {:?}", src, msg);
+                state.probe_peer(src);
+                state.process(msg)
+                    .map(move |msg| (src, msg))
+                    .map_err(|_| io::Error::from(io::ErrorKind::Other))
+            })
+            .flatten();
 
         let combined_stream = server_stream.select(timer_stream);
 
