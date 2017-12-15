@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, Ipv4Addr, Ipv6Addr};
 use std::io;
 use futures::{Sink, Stream, Future};
 use futures::IntoFuture;
@@ -11,8 +11,15 @@ pub fn request(&server: &SocketAddr,
                msg: Message,
                handle: &Handle)
                -> Box<Future<Item = Message, Error = io::Error>> {
-    // TODO: Bind on v4 or v6 depending on server address
-    let bind: SocketAddr = "[::]:0".parse().unwrap();
+    // Bind on either the v6 or the v4 wildcard address based on server's address
+    let bind: SocketAddr = if server.is_ipv4() {
+        SocketAddr::from(SocketAddrV4::new(Ipv4Addr::from(0), 0))
+    } else if server.is_ipv6() {
+        SocketAddr::from(SocketAddrV6::new(Ipv6Addr::from([0; 8]), 0, 0, 0))
+    } else {
+        panic!("Address isn't v4 nor v6")
+    };
+
     let socket = match UdpSocket::bind(&bind, handle) {
         Ok(s) => s,
         Err(e) => return Box::new(Err(e).into_future()),
