@@ -32,6 +32,24 @@ impl Content {
 }
 
 #[derive(Default)]
+struct HashStore(HashMap<Hash, Content>);
+
+impl HashStore {
+    pub fn put(&mut self, hash: &Hash, data: Vec<u8>) {
+        self.0.insert(*hash, Content::from_buffer(data));
+    }
+
+    pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
+        self.0.get(hash).map(|content| content.data.clone())
+    }
+
+    pub fn cleanup(&mut self) {
+        self.0.retain(|_, content| !content.is_stale());
+    }
+}
+
+
+#[derive(Default)]
 struct Listeners(Vec<Sender<Message>>);
 
 impl Listeners {
@@ -53,7 +71,7 @@ impl Listeners {
 #[derive(Default)]
 pub struct ServerState {
     listeners: Arc<RefCell<Listeners>>,
-    hashes: RefCell<HashMap<Hash, Content>>,
+    hashes: Arc<RefCell<HashStore>>,
 }
 
 impl ServerState {
@@ -87,21 +105,22 @@ impl ServerState {
     }
 
     fn put(&self, hash: &Hash, data: Vec<u8>) {
-        let mut hashes = self.hashes.borrow_mut();
-        hashes.insert(*hash, Content::from_buffer(data));
+        self.hashes.borrow_mut().put(hash, data);
     }
 
     fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
-        let hashes = self.hashes.borrow();
-        hashes.get(hash).map(|content| content.data.clone())
+        self.hashes.borrow_mut().get(hash)
     }
 
     pub fn run(&self) -> Box<Future<Item = (), Error = io::Error>> {
         let listeners = Arc::clone(&self.listeners);
+        let hashes = Arc::clone(&self.hashes);
+
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
         let timer_stream = interval.map_err(TimerError::into)
             .and_then(move |_| {
+                hashes.borrow_mut().cleanup();
                 listeners.borrow_mut()
                     .broadcast(&Message::KeepAlive)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
@@ -146,7 +165,7 @@ mod tests {
         assert_eq!(stream.poll(), Ok(Async::Ready(None)));
 
         // `IHave` shouldn't do anything
-        let mut stream = state.process(Message::IHave);
+        let mut stream = state.process(Message::IHave(hash.clone()));
         assert_eq!(stream.poll(), Ok(Async::Ready(None)));
 
         // `KeepAlive` shouldn't do anything
