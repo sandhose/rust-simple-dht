@@ -13,6 +13,39 @@ use state::ServerState;
 
 static TTL: u64 = 10;
 
+#[derive(Debug, Default)]
+struct PeerStore {
+    peers: RefCell<HashMap<SocketAddr, Peer>>,
+}
+
+impl PeerStore {
+    pub fn probe(&self, addr: SocketAddr) -> bool {
+        let is_new = !self.peers.borrow().contains_key(&addr);
+        self.peers
+            .borrow_mut()
+            .entry(addr)
+            .or_insert_with(Peer::new)
+            .probe();
+        is_new
+    }
+
+    pub fn cleanup(&self) {
+        self.peers.borrow_mut().retain(|_, peer| !peer.is_stale());
+    }
+
+    pub fn addresses(&self) -> Vec<SocketAddr> {
+        self.peers
+            .borrow()
+            .keys()
+            .map(|addr| addr.clone())
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.peers.borrow().len()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Peer {
     last_seen: Instant,
@@ -49,7 +82,7 @@ pub fn listen<'a>(
 
     let (sink, stream) = socket.framed(UdpMessage).split();
 
-    let shared_peers: Arc<RefCell<HashMap<SocketAddr, Peer>>> = Arc::default();
+    let shared_peers: Arc<PeerStore> = Arc::default();
 
     let peers = Arc::clone(&shared_peers);
     let broadcast_stream = state
@@ -57,25 +90,21 @@ pub fn listen<'a>(
         .map_err(|_| io::Error::from(io::ErrorKind::Other))
         .map(
             move |msg| -> Box<Stream<Item = (SocketAddr, Message), Error = io::Error>> {
-                peers.borrow_mut().retain(|_, peer| !peer.is_stale());
+                peers.cleanup();
 
                 if let Message::Discover(addr) = msg {
-                    peers
-                        .borrow_mut()
-                        .entry(addr)
-                        .or_insert_with(Peer::new)
-                        .probe();
+                    peers.probe(addr);
                     return Box::new(stream::empty());
                 }
 
-                let peers = peers.borrow();
                 if peers.len() > 0 {
                     println!("Broadcasting {:?} to {:?}", msg, peers);
                 }
 
                 let messages = peers
-                    .keys()
-                    .map(move |src| (src.clone(), msg.clone()))
+                    .addresses()
+                    .into_iter()
+                    .map(move |src| (src, msg.clone()))
                     .collect::<Vec<_>>();
                 Box::new(stream::iter_ok::<_, io::Error>(messages))
             },
@@ -86,11 +115,7 @@ pub fn listen<'a>(
     let server_stream = stream
         .map(move |(src, msg)| {
             println!("Got message from {}: {:?}", src, msg);
-            peers
-                .borrow_mut()
-                .entry(src)
-                .or_insert_with(Peer::new)
-                .probe();
+            peers.probe(src);
             state
                 .process(msg)
                 .map(move |msg| (src, msg))

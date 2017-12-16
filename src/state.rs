@@ -31,24 +31,26 @@ impl Content {
     }
 }
 
-#[derive(Default)]
-struct HashStore(HashMap<Hash, Content>);
+#[derive(Debug, Default)]
+struct HashStore {
+    hashes: HashMap<Hash, Content>,
+}
 
 impl HashStore {
     pub fn put(&mut self, hash: &Hash, data: Vec<u8>) {
-        self.0.insert(*hash, Content::from_buffer(data));
+        self.hashes.insert(*hash, Content::from_buffer(data));
     }
 
     pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
-        self.0.get(hash).map(|content| content.data.clone())
+        self.hashes.get(hash).map(|content| content.data.clone())
     }
 
     pub fn contains(&self, hash: &Hash) -> bool {
-        self.0.contains_key(hash)
+        self.hashes.contains_key(hash)
     }
 
     pub fn cleanup(&mut self) {
-        self.0.retain(|_, content| !content.is_stale());
+        self.hashes.retain(|_, content| !content.is_stale());
     }
 }
 
@@ -92,13 +94,7 @@ impl ServerState {
                 self.broadcast(&msg).unwrap();
                 None
             }
-            Message::IHave(hash) => {
-                if !self.contains(&hash) {
-                    Some(Message::Get(hash))
-                } else {
-                    None
-                }
-            }
+            Message::IHave(hash) if !self.contains(&hash) => Some(Message::Get(hash)),
             _ => None,
         };
 
