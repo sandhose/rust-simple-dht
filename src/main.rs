@@ -16,6 +16,7 @@ use simple_dht::messages::{Hash, Message, Payload};
 use simple_dht::server;
 use simple_dht::state::ServerState;
 use simple_dht::client;
+use simple_dht::prompt;
 
 fn valid_host(input: String) -> Result<(), String> {
     match input.as_str().to_socket_addrs() {
@@ -92,8 +93,10 @@ fn main() {
             let state = ServerState::default();
             let server_futures = addrs.into_iter()
                 .map(|addr| server::listen(&state, &addr, &handle));
+            let prompt_future = prompt::prompt(&state);
             let state_future = state.run();
-            let stream = futures_unordered(server_futures.chain(iter::once(state_future)));
+            let stream = futures_unordered(server_futures.chain(iter::once(prompt_future))
+                .chain(iter::once(state_future)));
             core.run(stream.collect()).unwrap();
         }
         Args::Client(addrs, msg) => {
