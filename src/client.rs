@@ -1,16 +1,17 @@
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::io;
-use futures::{Sink, Stream, Future};
+use futures::{Future, Sink, Stream};
 use futures::IntoFuture;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
-use messages::{UdpMessage, Message};
+use messages::{Message, UdpMessage};
 
-pub fn request(&server: &SocketAddr,
-               msg: Message,
-               handle: &Handle)
-               -> Box<Future<Item = Message, Error = io::Error>> {
+pub fn request(
+    &server: &SocketAddr,
+    msg: Message,
+    handle: &Handle,
+) -> Box<Future<Item = Message, Error = io::Error>> {
     // Bind on either the v6 or the v4 wildcard address based on server's address
     let bind: SocketAddr = if server.is_ipv4() {
         SocketAddr::from(SocketAddrV4::new(Ipv4Addr::from(0), 0))

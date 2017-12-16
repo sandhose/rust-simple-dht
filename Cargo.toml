@@ -5,9 +5,10 @@ authors = ["Quentin Gliech <quentin.gliech@etu.unistra.fr>"]
 
 [dependencies]
 clap = "2.26.2"
-tokio-core = "0.1.10"
-tokio-timer = "0.1.2"
 futures = "0.1.17"
 rustyline = "1.0.0"
+shlex = "0.1.1"
 structopt = "0.1.6"
 structopt-derive = "0.1.6"
+tokio-core = "0.1.10"
+tokio-timer = "0.1.2"

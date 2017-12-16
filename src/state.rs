@@ -1,14 +1,14 @@
 use std::io;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::sync::Arc;
 use futures::stream::iter_ok;
-use futures::{Stream, Future, future};
-use futures::sync::mpsc::{Sender, Receiver, TrySendError, channel};
+use futures::{future, Future, Stream};
+use futures::sync::mpsc::{channel, Receiver, Sender, TrySendError};
 use tokio_timer::{Timer, TimerError};
 
-use messages::{Message, Hash, Payload};
+use messages::{Hash, Message, Payload};
 
 static TTL: u64 = 10;
 
@@ -48,7 +48,6 @@ impl HashStore {
     }
 }
 
-
 #[derive(Default)]
 struct Listeners(Vec<Sender<Message>>);
 
@@ -78,9 +77,8 @@ impl ServerState {
     /// Process a Message, returning a Stream of Messages to respond
     pub fn process(&self, msg: Message) -> Box<Stream<Item = Message, Error = ()>> {
         let opt = match msg {
-            Message::Get(hash) => {
-                self.get(&hash).map(|content| Message::Put(hash, Payload(content)))
-            }
+            Message::Get(hash) => self.get(&hash)
+                .map(|content| Message::Put(hash, Payload(content))),
             Message::Put(hash, Payload(p)) => {
                 self.put(&hash, p);
                 Some(Message::IHave(hash))
@@ -118,13 +116,13 @@ impl ServerState {
 
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
-        let timer_stream = interval.map_err(TimerError::into)
-            .and_then(move |_| {
-                hashes.borrow_mut().cleanup();
-                listeners.borrow_mut()
-                    .broadcast(&Message::KeepAlive)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-            });
+        let timer_stream = interval.map_err(TimerError::into).and_then(move |_| {
+            hashes.borrow_mut().cleanup();
+            listeners
+                .borrow_mut()
+                .broadcast(&Message::KeepAlive)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        });
         Box::new(timer_stream.for_each(|_| future::ok(())))
     }
 }
@@ -134,7 +132,7 @@ mod tests {
     use super::ServerState;
     use std::str::FromStr;
     use futures::Async;
-    use messages::{Message, Payload, Hash};
+    use messages::{Hash, Message, Payload};
 
     #[test]
     fn store_hashes() {

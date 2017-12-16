@@ -12,7 +12,9 @@ pub trait Pushable {
     fn push_in_frame(&self, frame: &mut Vec<u8>);
     /// Get the value length
     fn frame_len(&self) -> usize;
-    fn pull(buf: &[u8]) -> Result<Self, DecodeError> where Self: Sized;
+    fn pull(buf: &[u8]) -> Result<Self, DecodeError>
+    where
+        Self: Sized;
 }
 
 const HASH_SIZE: usize = 8;
@@ -34,7 +36,8 @@ impl Hash {
     }
 
     pub fn from_slice(hash: &[u8]) -> Option<Self> {
-        hash.get(..HASH_SIZE).map(|h| Hash::new([h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]]))
+        hash.get(..HASH_SIZE)
+            .map(|h| Hash::new([h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]]))
     }
 }
 
@@ -59,8 +62,10 @@ impl FromStr for Hash {
         if let Some(s) = s.as_bytes().get(0..(HASH_SIZE * 2)) {
             let mut hash = [0; HASH_SIZE];
             for i in 0..HASH_SIZE {
-                if let (Some(upper), Some(lower)) =
-                    ((s[i * 2] as char).to_digit(16), (s[i * 2 + 1] as char).to_digit(16)) {
+                if let (Some(upper), Some(lower)) = (
+                    (s[i * 2] as char).to_digit(16),
+                    (s[i * 2 + 1] as char).to_digit(16),
+                ) {
                     hash[i] = (lower + (upper << 4)) as u8;
                 } else {
                     return Err(HashParseError);
@@ -144,7 +149,10 @@ impl Pushable for Payload {
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
         let length = try!(buf.get(0..2).ok_or(DecodeError::MessageTooShort));
         let length = (u64::from(length[0]) << 8) + u64::from(length[1]);
-        let data = try!(buf.get(2..(2 + length as usize)).ok_or(DecodeError::MessageTooShort));
+        let data = try!(
+            buf.get(2..(2 + length as usize))
+                .ok_or(DecodeError::MessageTooShort)
+        );
         let mut vec = Vec::with_capacity(length as usize);
         vec.extend_from_slice(data);
         Ok(Payload(vec))
@@ -201,7 +209,6 @@ impl From<DecodeError> for io::Error {
         io::Error::new(io::ErrorKind::Other, src)
     }
 }
-
 
 pub struct UdpMessage;
 
@@ -288,8 +295,10 @@ mod tests {
     #[test]
     fn serialize_get() {
         let hash = Hash([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]);
-        assert_eq!(Message::Get(hash).serialize(),
-                   [0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]);
+        assert_eq!(
+            Message::Get(hash).serialize(),
+            [0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
+        );
     }
 
     #[test]
