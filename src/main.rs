@@ -6,11 +6,14 @@ extern crate futures;
 extern crate simple_dht;
 
 use clap::ArgMatches;
+use futures::stream::futures_unordered;
+use futures::Stream;
 use tokio_core::reactor::Core;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use simple_dht::messages::{Hash, Message, Payload};
-use simple_dht::server::Server;
+use simple_dht::server;
+use simple_dht::state::ServerState;
 use simple_dht::client;
 
 fn valid_host(input: String) -> Result<(), String> {
@@ -84,8 +87,10 @@ fn main() {
     let mut core = Core::new().unwrap();
     match Args::from_matches(&matches).unwrap() {
         Args::Server(addr) => {
-            let server = Server::from_addr(&addr, &core.handle()).unwrap();
-            core.run(server.run()).unwrap()
+            let state = ServerState::default();
+            let server_future = server::listen(&state, &addr, &core.handle());
+            let state_future = state.run();
+            core.run(futures_unordered(vec![server_future, state_future]).collect()).unwrap();
         }
         Args::Client(addr, msg) => {
             let future = client::request(&addr, msg, &core.handle());

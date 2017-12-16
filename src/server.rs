@@ -4,9 +4,8 @@ use std::sync::Arc;
 use std::time::{Instant, Duration};
 use std::collections::HashMap;
 use std::cell::RefCell;
-use futures::{Sink, Stream, Future};
-use futures::stream;
-use tokio_core::net::{UdpFramed, UdpSocket};
+use futures::{Sink, Stream, Future, stream, future};
+use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
 
@@ -34,60 +33,51 @@ impl Peer {
     }
 }
 
+pub fn listen<'a>(state: &'a ServerState,
+                  addr: &SocketAddr,
+                  handle: &Handle)
+                  -> Box<Future<Item = (), Error = io::Error> + 'a> {
+    let socket = match UdpSocket::bind(&addr, handle) {
+        Ok(s) => s,
+        Err(e) => return Box::new(future::err(e)),
+    };
 
-pub struct Server {
-    socket: UdpFramed<UdpMessage>,
-    state: Arc<ServerState>,
-    peers: Arc<RefCell<HashMap<SocketAddr, Peer>>>,
-}
+    // TODO: unwrap?
+    println!("Listening on {}", socket.local_addr().unwrap());
 
-impl Server {
-    pub fn from_addr(&addr: &SocketAddr, handle: &Handle) -> io::Result<Self> {
-        Ok(Server {
-            socket: UdpSocket::bind(&addr, handle)?.framed(UdpMessage),
-            state: Arc::default(),
-            peers: Arc::default(),
+    let (sink, stream) = socket.framed(UdpMessage).split();
+
+    let shared_peers: Arc<RefCell<HashMap<SocketAddr, Peer>>> = Arc::default();
+
+    let peers = Arc::clone(&shared_peers);
+    let broadcast_stream = state.subscribe()
+        .map_err(|_| io::Error::from(io::ErrorKind::Other))
+        .map(move |msg| {
+            peers.borrow_mut().retain(|_, peer| !peer.is_stale());
+
+            let peers = peers.borrow();
+            if peers.len() > 0 {
+                println!("Broadcasting {:?} to {:?}", msg, peers);
+            }
+
+            let messages = peers.keys()
+                .map(move |src| (src.clone(), msg.clone()))
+                .collect::<Vec<_>>();
+            stream::iter_ok::<_, io::Error>(messages)
         })
-    }
+        .flatten();
 
-    pub fn run(self) -> Box<Future<Item = (), Error = io::Error>> {
-        let (sink, stream) = self.socket.split();
+    let peers = Arc::clone(&shared_peers);
+    let server_stream = stream.map(move |(src, msg)| {
+            println!("Got message from {}: {:?}", src, msg);
+            peers.borrow_mut().entry(src).or_insert_with(Peer::new).probe();
+            state.process(msg)
+                .map(move |msg| (src, msg))
+                .map_err(|_| io::Error::from(io::ErrorKind::Other))
+        })
+        .flatten();
 
-        let peers = Arc::clone(&self.peers);
-        let broadcast_stream = Arc::clone(&self.state)
-            .subscribe()
-            .map_err(|_| io::Error::from(io::ErrorKind::Other))
-            .map(move |msg| {
-                {
-                    peers.borrow_mut().retain(|_, peer| !peer.is_stale());
-                }
+    let combined_stream = server_stream.select(broadcast_stream);
 
-                println!("Broadcasting {:?} to {:?}", msg, peers.borrow());
-
-                let messages = peers.borrow()
-                    .keys()
-                    .map(move |src| (src.clone(), msg.clone()))
-                    .collect::<Vec<_>>();
-                stream::iter_ok::<_, io::Error>(messages)
-            })
-            .flatten();
-
-
-        let state = Arc::clone(&self.state);
-        let peers = Arc::clone(&self.peers);
-        let server_stream = stream.map(move |(src, msg)| {
-                println!("Got message from {}: {:?}", src, msg);
-                peers.borrow_mut().entry(src).or_insert_with(Peer::new).probe();
-                state.process(msg)
-                    .map(move |msg| (src, msg))
-                    .map_err(|_| io::Error::from(io::ErrorKind::Other))
-            })
-            .flatten();
-
-        let combined_stream = server_stream.select(broadcast_stream);
-
-        let future = sink.send_all(combined_stream).map(|_| ());
-
-        Box::new(future.join(self.state.run()).map(|_| ()))
-    }
+    Box::new(sink.send_all(combined_stream).map(|_| ()))
 }
