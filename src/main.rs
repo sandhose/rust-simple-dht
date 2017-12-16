@@ -9,6 +9,7 @@ use clap::ArgMatches;
 use futures::stream::futures_unordered;
 use futures::Stream;
 use tokio_core::reactor::Core;
+use std::iter;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
 use simple_dht::messages::{Hash, Message, Payload};
@@ -31,8 +32,8 @@ fn valid_hash(input: String) -> Result<(), String> {
 }
 
 enum Args {
-    Server(SocketAddr),
-    Client(SocketAddr, Message),
+    Server(Vec<SocketAddr>),
+    Client(Vec<SocketAddr>, Message),
 }
 
 impl Args {
@@ -40,7 +41,7 @@ impl Args {
         let addr = matches.value_of("CONNECT")?
             .to_socket_addrs()
             .ok()?
-            .next()?;
+            .collect();
 
         if matches.subcommand_matches("server").is_some() {
             Some(Args::Server(addr))
@@ -86,14 +87,18 @@ fn main() {
 
     let mut core = Core::new().unwrap();
     match Args::from_matches(&matches).unwrap() {
-        Args::Server(addr) => {
+        Args::Server(addrs) => {
+            let handle = core.handle();
             let state = ServerState::default();
-            let server_future = server::listen(&state, &addr, &core.handle());
+            let server_futures = addrs.into_iter()
+                .map(|addr| server::listen(&state, &addr, &handle));
             let state_future = state.run();
-            core.run(futures_unordered(vec![server_future, state_future]).collect()).unwrap();
+            let stream = futures_unordered(server_futures.chain(iter::once(state_future)));
+            core.run(stream.collect()).unwrap();
         }
-        Args::Client(addr, msg) => {
-            let future = client::request(&addr, msg, &core.handle());
+        Args::Client(addrs, msg) => {
+            // FIXME: try multiple addresses?
+            let future = client::request(&addrs[0], msg, &core.handle());
             let resp = core.run(future).unwrap();
             println!("{:?}", resp);
         }
