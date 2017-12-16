@@ -1,3 +1,4 @@
+use std::process;
 use std::io;
 use std::thread;
 use std::iter;
@@ -10,6 +11,7 @@ use structopt::StructOpt;
 use futures::{future, Future, Sink, Stream};
 use futures::sync::mpsc::channel;
 use rustyline::Editor;
+use rustyline::error::ReadlineError;
 
 use state::ServerState;
 use messages::{Hash, Message, Payload};
@@ -70,7 +72,7 @@ pub enum CLI {
     },
 }
 
-pub fn prompt(state: &ServerState) -> Box<Future<Item = (), Error = io::Error>> {
+pub fn prompt<'a>(state: &'a ServerState) -> Box<Future<Item = (), Error = io::Error> + 'a> {
     let (sender, receiver) = channel(1);
 
     let mut rl = Editor::<()>::new();
@@ -81,6 +83,9 @@ pub fn prompt(state: &ServerState) -> Box<Future<Item = (), Error = io::Error>> 
             Ok(line) => {
                 let app = ClientCommand::clap();
                 let args = shlex::split(&line).unwrap();
+                if args.len() == 0 {
+                    continue;
+                }
                 rl.add_history_entry(&line);
                 match app.get_matches_from_safe(
                     iter::once(String::from("client")).chain(args.into_iter()),
@@ -97,15 +102,26 @@ pub fn prompt(state: &ServerState) -> Box<Future<Item = (), Error = io::Error>> 
                     }
                 };
             }
+            Err(ReadlineError::Interrupted) => {
+                println!("(EOF to exit)");
+            }
+            Err(ReadlineError::Eof) => {
+                // TODO: gracefully exit
+                process::exit(0);
+            }
+            // TODO
             _ => (),
         }
     });
 
     Box::new(
         receiver
+            .map(move |value| state.process(value.to_message()))
+            .flatten()
             .map_err(|_| io::Error::from(io::ErrorKind::Other))
             .for_each(|value| {
-                println!("Got value: {:?}", value);
+                // TODO: pretty-print this.
+                println!("Got response: {:?}", value);
                 future::ok(())
             }),
     )
