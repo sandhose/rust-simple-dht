@@ -43,6 +43,10 @@ impl HashStore {
         self.0.get(hash).map(|content| content.data.clone())
     }
 
+    pub fn contains(&self, hash: &Hash) -> bool {
+        self.0.contains_key(hash)
+    }
+
     pub fn cleanup(&mut self) {
         self.0.retain(|_, content| !content.is_stale());
     }
@@ -81,7 +85,19 @@ impl ServerState {
                 .map(|content| Message::Put(hash, Payload(content))),
             Message::Put(hash, Payload(p)) => {
                 self.put(&hash, p);
-                Some(Message::IHave(hash))
+                self.broadcast(&Message::IHave(hash)).unwrap();
+                None
+            }
+            Message::Discover(_) => {
+                self.broadcast(&msg).unwrap();
+                None
+            }
+            Message::IHave(hash) => {
+                if !self.contains(&hash) {
+                    Some(Message::Get(hash))
+                } else {
+                    None
+                }
             }
             _ => None,
         };
@@ -110,6 +126,10 @@ impl ServerState {
         self.hashes.borrow_mut().get(hash)
     }
 
+    fn contains(&self, hash: &Hash) -> bool {
+        self.hashes.borrow_mut().contains(hash)
+    }
+
     pub fn run(&self) -> Box<Future<Item = (), Error = io::Error>> {
         let listeners = Arc::clone(&self.listeners);
         let hashes = Arc::clone(&self.hashes);
@@ -131,7 +151,7 @@ impl ServerState {
 mod tests {
     use super::ServerState;
     use std::str::FromStr;
-    use futures::Async;
+    use futures::{Async, Stream};
     use messages::{Hash, Message, Payload};
 
     #[test]
@@ -150,11 +170,12 @@ mod tests {
         let state = ServerState::default();
         let hash = Hash::from_str("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
+        let mut listener = state.subscribe();
 
         // `Put` should yield a `IHave` message
         let mut stream = state.process(Message::Put(hash.clone(), Payload(content.clone())));
         let expected = Message::IHave(hash.clone());
-        assert_eq!(stream.poll(), Ok(Async::Ready(Some(expected))));
+        assert_eq!(listener.poll(), Ok(Async::Ready(Some(expected))));
         assert_eq!(stream.poll(), Ok(Async::Ready(None)));
 
         // `Get` should yield a `Put` message

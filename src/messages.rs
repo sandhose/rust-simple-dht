@@ -3,7 +3,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::io;
 use std::marker::Sized;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str;
 use tokio_core::net::UdpCodec;
 
@@ -93,6 +93,10 @@ impl Error for HashParseError {
     }
 }
 
+macro_rules! pull {
+    ($buf:expr, $range:expr) => {$buf.get($range).ok_or(DecodeError::MessageTooShort)}
+}
+
 impl Pushable for Hash {
     fn push_in_frame(&self, frame: &mut Vec<u8>) {
         frame.extend_from_slice(&self.0);
@@ -103,9 +107,7 @@ impl Pushable for Hash {
     }
 
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
-        buf.get(..HASH_SIZE)
-            .ok_or(DecodeError::MessageTooShort)
-            .map(|hash| Hash::from_slice(hash).unwrap())
+        pull!(buf, ..HASH_SIZE).map(|hash| Hash::from_slice(hash).unwrap())
     }
 }
 
@@ -147,12 +149,9 @@ impl Pushable for Payload {
     }
 
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
-        let length = try!(buf.get(0..2).ok_or(DecodeError::MessageTooShort));
+        let length = try!(pull!(buf, 0..2));
         let length = (u64::from(length[0]) << 8) + u64::from(length[1]);
-        let data = try!(
-            buf.get(2..(2 + length as usize))
-                .ok_or(DecodeError::MessageTooShort)
-        );
+        let data = try!(pull!(buf, 2..(2 + length as usize)));
         let mut vec = Vec::with_capacity(length as usize);
         vec.extend_from_slice(data);
         Ok(Payload(vec))
@@ -169,7 +168,56 @@ impl Pushable for u8 {
     }
 
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
-        Ok(*try!(buf.get(0).ok_or(DecodeError::MessageTooShort)))
+        pull!(buf, ..1).map(|v| v[0])
+    }
+}
+
+impl Pushable for SocketAddr {
+    fn push_in_frame(&self, frame: &mut Vec<u8>) {
+        match *self {
+            SocketAddr::V4(sock) => {
+                frame.push(4);
+                frame.extend_from_slice(&sock.ip().octets()[..]);
+            }
+            SocketAddr::V6(sock) => {
+                frame.push(6);
+                frame.extend_from_slice(&sock.ip().octets()[..]);
+            }
+        }
+
+        let port = self.port();
+        frame.push((port >> 8) as u8);
+        frame.push(port as u8);
+    }
+
+    fn frame_len(&self) -> usize {
+        match *self {
+            SocketAddr::V4(_) => 1 + 2 + 4,
+            SocketAddr::V6(_) => 1 + 2 + 16,
+        }
+    }
+
+    fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
+        let family = pull!(buf, ..1)?[0];
+        let (ip, port) = match family {
+            4 => {
+                let mut ip: [u8; 4] = [0; 4];
+                let octets = pull!(buf, 1..5)?;
+                ip.copy_from_slice(octets);
+                (IpAddr::from(ip), pull!(buf, 5..7)?)
+            }
+            6 => {
+                let mut ip: [u8; 16] = [0; 16];
+                let octets = pull!(buf, 1..17)?;
+                ip.copy_from_slice(octets);
+                (IpAddr::from(ip), pull!(buf, 17..19)?)
+            }
+            _ => return Err(DecodeError::InvalidContent),
+        };
+
+        let port = (u16::from(port[0]) << 8) + u16::from(port[1]);
+
+        Ok(SocketAddr::from((ip, port)))
     }
 }
 
@@ -179,6 +227,7 @@ pub enum Message {
     Put(Hash, Payload),
     KeepAlive,
     IHave(Hash),
+    Discover(SocketAddr),
 }
 
 #[derive(Debug)]
@@ -186,6 +235,7 @@ pub enum DecodeError {
     MessageTooLong,
     MessageTooShort,
     InvalidMessageType,
+    InvalidContent,
 }
 
 impl fmt::Display for DecodeError {
@@ -200,6 +250,7 @@ impl Error for DecodeError {
             DecodeError::MessageTooLong => "input message is too long",
             DecodeError::MessageTooShort => "input message is too short",
             DecodeError::InvalidMessageType => "message type unknown",
+            DecodeError::InvalidContent => "invalid message content",
         }
     }
 }
@@ -251,6 +302,7 @@ impl Message {
             Message::Put(ref hash, ref payload) => build_msg!(id, hash, payload),
             Message::KeepAlive => build_msg!(id),
             Message::IHave(ref hash) => build_msg!(id, hash),
+            Message::Discover(ref addr) => build_msg!(id, addr),
         }
     }
 
@@ -259,18 +311,22 @@ impl Message {
 
         let msg = match id {
             0 => {
-                let hash = try!(Hash::pull(&buf[1..]));
+                let hash = Hash::pull(&buf[1..])?;
                 Message::Get(hash)
             }
             1 => {
-                let hash = try!(Hash::pull(&buf[1..]));
-                let payload = try!(Payload::pull(&buf[(1 + HASH_SIZE)..]));
+                let hash = Hash::pull(&buf[1..])?;
+                let payload = Payload::pull(&buf[(1 + HASH_SIZE)..])?;
                 Message::Put(hash, payload)
             }
             2 => Message::KeepAlive,
             3 => {
-                let hash = try!(Hash::pull(&buf[1..]));
+                let hash = Hash::pull(&buf[1..])?;
                 Message::IHave(hash)
+            }
+            4 => {
+                let addr = SocketAddr::pull(&buf[1..])?;
+                Message::Discover(addr)
             }
             _ => return Err(DecodeError::InvalidMessageType),
         };
@@ -284,6 +340,7 @@ impl Message {
             Message::Put(_, _) => 1,
             Message::KeepAlive => 2,
             Message::IHave(_) => 3,
+            Message::Discover(_) => 4,
         }
     }
 }

@@ -43,6 +43,12 @@ pub enum ClientCommand {
         /// The payload to send
         payload: Payload,
     },
+    #[structopt(name = "discover", display_order_raw = "3")]
+    /// DISCOVER a peer
+    Discover {
+        /// The peer address
+        address: SocketAddr,
+    },
 }
 
 impl ClientCommand {
@@ -50,6 +56,7 @@ impl ClientCommand {
         match self {
             ClientCommand::Get { hash } => Message::Get(hash),
             ClientCommand::Put { hash, payload } => Message::Put(hash, payload),
+            ClientCommand::Discover { address } => Message::Discover(address),
         }
     }
 }

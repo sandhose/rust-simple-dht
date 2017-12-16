@@ -8,7 +8,7 @@ use futures::{future, stream, Future, Sink, Stream};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
-use messages::UdpMessage;
+use messages::{Message, UdpMessage};
 use state::ServerState;
 
 static TTL: u64 = 10;
@@ -55,20 +55,31 @@ pub fn listen<'a>(
     let broadcast_stream = state
         .subscribe()
         .map_err(|_| io::Error::from(io::ErrorKind::Other))
-        .map(move |msg| {
-            peers.borrow_mut().retain(|_, peer| !peer.is_stale());
+        .map(
+            move |msg| -> Box<Stream<Item = (SocketAddr, Message), Error = io::Error>> {
+                peers.borrow_mut().retain(|_, peer| !peer.is_stale());
 
-            let peers = peers.borrow();
-            if peers.len() > 0 {
-                println!("Broadcasting {:?} to {:?}", msg, peers);
-            }
+                if let Message::Discover(addr) = msg {
+                    peers
+                        .borrow_mut()
+                        .entry(addr)
+                        .or_insert_with(Peer::new)
+                        .probe();
+                    return Box::new(stream::empty());
+                }
 
-            let messages = peers
-                .keys()
-                .map(move |src| (src.clone(), msg.clone()))
-                .collect::<Vec<_>>();
-            stream::iter_ok::<_, io::Error>(messages)
-        })
+                let peers = peers.borrow();
+                if peers.len() > 0 {
+                    println!("Broadcasting {:?} to {:?}", msg, peers);
+                }
+
+                let messages = peers
+                    .keys()
+                    .map(move |src| (src.clone(), msg.clone()))
+                    .collect::<Vec<_>>();
+                Box::new(stream::iter_ok::<_, io::Error>(messages))
+            },
+        )
         .flatten();
 
     let peers = Arc::clone(&shared_peers);
