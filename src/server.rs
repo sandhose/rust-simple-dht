@@ -72,13 +72,9 @@ pub fn listen<'a>(
     addr: &SocketAddr,
     handle: &Handle,
 ) -> Box<Future<Item = (), Error = io::Error> + 'a> {
-    let socket = match UdpSocket::bind(&addr, handle) {
-        Ok(s) => s,
-        Err(e) => return Box::new(future::err(e)),
-    };
+    let socket = try_to_future!(UdpSocket::bind(&addr, handle));
 
-    // TODO: unwrap?
-    println!("Listening on {}", socket.local_addr().unwrap());
+    println!("Listening on {}", try_to_future!(socket.local_addr()));
 
     let (sink, stream) = socket.framed(UdpMessage).split();
 

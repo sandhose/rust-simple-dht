@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::iter;
 use std::str::FromStr;
 use std::io;
 use std::marker::Sized;
@@ -15,6 +16,10 @@ pub trait Pushable {
     fn pull(buf: &[u8]) -> Result<Self, DecodeError>
     where
         Self: Sized;
+}
+
+macro_rules! pull {
+    ($buf:expr, $range:expr) => {$buf.get($range).ok_or(DecodeError::MessageTooShort)}
 }
 
 const HASH_SIZE: usize = 8;
@@ -54,27 +59,31 @@ impl FromStr for Hash {
     /// assert_eq!(Hash::from_str("0123456789abcdef"),
     ///            Ok(Hash::new([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])));
     /// ```
-    ///
-    /// ---
-    ///
-    /// TODO: Allow smaller hash input (`42` = `0000000000000042`)
     fn from_str(s: &str) -> Result<Hash, HashParseError> {
-        if let Some(s) = s.as_bytes().get(0..(HASH_SIZE * 2)) {
-            let mut hash = [0; HASH_SIZE];
-            for i in 0..HASH_SIZE {
-                if let (Some(upper), Some(lower)) = (
-                    (s[i * 2] as char).to_digit(16),
-                    (s[i * 2 + 1] as char).to_digit(16),
-                ) {
-                    hash[i] = (lower + (upper << 4)) as u8;
-                } else {
-                    return Err(HashParseError);
-                }
-            }
-            Ok(Hash::new(hash))
-        } else {
-            Err(HashParseError)
+        let count = s.chars().count();
+        if count >= HASH_SIZE * 2 {
+            return Err(HashParseError);
         }
+
+        // Fill with leading zeros
+        let chars: Vec<char> = iter::repeat('0')
+            .take(HASH_SIZE * 2 - count)
+            .chain(s.chars())
+            .collect();
+
+        let mut hash = [0; HASH_SIZE];
+
+        for i in 0..HASH_SIZE {
+            if let (Some(upper), Some(lower)) =
+                (chars[i * 2].to_digit(16), chars[i * 2 + 1].to_digit(16))
+            {
+                hash[i] = (lower + (upper << 4)) as u8;
+            } else {
+                return Err(HashParseError);
+            }
+        }
+
+        Ok(Hash::new(hash))
     }
 }
 
@@ -91,10 +100,6 @@ impl Error for HashParseError {
     fn description(&self) -> &str {
         "invalid hash syntax"
     }
-}
-
-macro_rules! pull {
-    ($buf:expr, $range:expr) => {$buf.get($range).ok_or(DecodeError::MessageTooShort)}
 }
 
 impl Pushable for Hash {
