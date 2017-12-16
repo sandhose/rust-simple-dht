@@ -132,13 +132,14 @@ impl ServerState {
 #[cfg(test)]
 mod tests {
     use super::ServerState;
+    use std::str::FromStr;
     use futures::Async;
     use messages::{Message, Payload, Hash};
 
     #[test]
     fn store_hashes() {
         let state = ServerState::default();
-        let hash = Hash::from_hex("0123456789abcdef").unwrap();
+        let hash = Hash::from_str("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
         assert_eq!(state.get(&hash.clone()), None);
 
@@ -149,7 +150,7 @@ mod tests {
     #[test]
     fn process_messages() {
         let state = ServerState::default();
-        let hash = Hash::from_hex("0123456789abcdef").unwrap();
+        let hash = Hash::from_str("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
 
         // `Put` should yield a `IHave` message

@@ -1,97 +1,98 @@
-#[macro_use]
 extern crate clap;
 extern crate tokio_core;
 extern crate futures;
+extern crate structopt;
+#[macro_use]
+extern crate structopt_derive;
 
 extern crate simple_dht;
 
-use clap::ArgMatches;
 use futures::stream::futures_unordered;
 use futures::Stream;
 use tokio_core::reactor::Core;
+use std::str::FromStr;
 use std::iter;
+use std::io;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs;
+use structopt::StructOpt;
+
 use simple_dht::messages::{Hash, Message, Payload};
 use simple_dht::server;
 use simple_dht::state::ServerState;
 use simple_dht::client;
 use simple_dht::prompt;
 
-fn valid_host(input: String) -> Result<(), String> {
-    match input.as_str().to_socket_addrs() {
-        Ok(_) => Ok(()),
-        Err(ref e) => Err(format!("{}", e)),
+
+// FIXME: i don't like this
+#[derive(Debug)]
+pub struct Addrs(Vec<SocketAddr>);
+
+impl FromStr for Addrs {
+    type Err = io::Error;
+    fn from_str(src: &str) -> Result<Addrs, io::Error> {
+        Ok(Addrs(src.to_socket_addrs()?.collect()))
     }
 }
 
-fn valid_hash(input: String) -> Result<(), String> {
-    match Hash::from_hex(input.as_str()) {
-        Some(_) => Ok(()),
-        None => Err(String::from("invalid hash")),
-    }
+
+#[derive(StructOpt, Debug)]
+enum ClientCommand {
+    #[structopt(name = "get", display_order_raw = "1")]
+    /// GET a hash
+    Get {
+        /// The hash to get
+        hash: Hash,
+    },
+    #[structopt(name = "put", display_order_raw = "2")]
+    /// PUT a hash
+    Put {
+        /// The hash to put
+        hash: Hash,
+        /// The payload to send
+        payload: Payload,
+    },
 }
 
-enum Args {
-    Server(Vec<SocketAddr>),
-    Client(Vec<SocketAddr>, Message),
-}
-
-impl Args {
-    fn from_matches(matches: &ArgMatches) -> Option<Self> {
-        let addr = matches.value_of("CONNECT")?
-            .to_socket_addrs()
-            .ok()?
-            .collect();
-
-        if matches.subcommand_matches("server").is_some() {
-            Some(Args::Server(addr))
-        } else {
-            let msg = if let Some(m) = matches.subcommand_matches("get") {
-                Message::Get(Hash::from_hex(m.value_of("HASH")?)?)
-            } else if let Some(m) = matches.subcommand_matches("put") {
-                let hash = Hash::from_hex(m.value_of("HASH")?)?;
-                let payload = Payload(m.value_of("PAYLOAD")?.as_bytes().to_vec());
-                Message::Put(hash, payload)
-            } else {
-                return None;
-            };
-
-            Some(Args::Client(addr, msg))
+impl ClientCommand {
+    fn to_message(self) -> Message {
+        match self {
+            ClientCommand::Get { hash } => Message::Get(hash),
+            ClientCommand::Put { hash, payload } => Message::Put(hash, payload),
         }
     }
 }
 
+#[derive(StructOpt, Debug)]
+enum CLI {
+    #[structopt(name = "server")]
+    /// Act as a server
+    Server {
+        #[structopt(default_value = "[::]:0")]
+        /// The address the server should listen to
+        bind: Addrs,
+    },
+    #[structopt(name = "client")]
+    /// Send a request to a server
+    Client {
+        /// The host:port to connect to
+        connect: Addrs,
+        #[structopt(subcommand)]
+        command: ClientCommand,
+    },
+}
+
 fn main() {
-    let matches = clap_app!((crate_name!()) =>
-        (version: crate_version!())
-        (author: crate_authors!("\n"))
-        (about: crate_description!())
-        (@setting DeriveDisplayOrder)
-        (@setting SubcommandRequiredElseHelp)
-        (@setting GlobalVersion)
-        (@arg CONNECT: +required {valid_host} "The host:port to connect to")
-        (@subcommand get =>
-            (about: "GET a hash")
-            (@arg HASH: +required {valid_hash} "What hash to get")
-        )
-        (@subcommand put =>
-            (about: "PUT a hash")
-            (@arg HASH: +required {valid_hash} "Which hash to put")
-            (@arg PAYLOAD: +required "What data to put")
-        )
-        (@subcommand server =>
-            (about: "Act as a server")
-        )
-    )
-        .get_matches();
+    let args = CLI::from_args();
+    println!("{:?}", args);
 
     let mut core = Core::new().unwrap();
-    match Args::from_matches(&matches).unwrap() {
-        Args::Server(addrs) => {
+    match args {
+        CLI::Server { bind } => {
             let handle = core.handle();
             let state = ServerState::default();
-            let server_futures = addrs.into_iter()
+            let server_futures = bind.0
+                .into_iter()
                 .map(|addr| server::listen(&state, &addr, &handle));
             let prompt_future = prompt::prompt(&state);
             let state_future = state.run();
@@ -99,9 +100,9 @@ fn main() {
                 .chain(iter::once(state_future)));
             core.run(stream.collect()).unwrap();
         }
-        Args::Client(addrs, msg) => {
+        CLI::Client { connect, command } => {
             // FIXME: try multiple addresses?
-            let future = client::request(&addrs[0], msg, &core.handle());
+            let future = client::request(&connect.0[0], command.to_message(), &core.handle());
             let resp = core.run(future).unwrap();
             println!("{:?}", resp);
         }

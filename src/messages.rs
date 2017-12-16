@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 use std::io;
 use std::marker::Sized;
 use std::net::SocketAddr;
@@ -15,40 +16,11 @@ pub trait Pushable {
 }
 
 const HASH_SIZE: usize = 8;
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
-    /// Convert a string into a Hash
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use simple_dht::messages::Hash;
-    /// assert_eq!(Hash::from_hex("0123456789abcdef"),
-    ///            Some(Hash::new([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])));
-    /// ```
-    ///
-    /// ---
-    ///
-    /// TODO: Allow smaller hash input (`42` = `0000000000000042`)
-    pub fn from_hex(_input: &str) -> Option<Self> {
-        if let Some(input) = _input.as_bytes().get(0..(HASH_SIZE * 2)) {
-            let mut hash = [0; HASH_SIZE];
-            for i in 0..HASH_SIZE {
-                if let (Some(upper), Some(lower)) =
-                    ((input[i * 2] as char).to_digit(16), (input[i * 2 + 1] as char).to_digit(16)) {
-                    hash[i] = (lower + (upper << 4)) as u8;
-                } else {
-                    return None;
-                }
-            }
-            Some(Hash::new(hash))
-        } else {
-            None
-        }
-    }
-
     /// Create a new Hash
     ///
     /// # Examples
@@ -63,6 +35,56 @@ impl Hash {
 
     pub fn from_slice(hash: &[u8]) -> Option<Self> {
         hash.get(..HASH_SIZE).map(|h| Hash::new([h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]]))
+    }
+}
+
+impl FromStr for Hash {
+    type Err = HashParseError;
+
+    /// Create a Hash from a string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::str::FromStr;
+    /// use simple_dht::messages::Hash;
+    /// assert_eq!(Hash::from_str("0123456789abcdef"),
+    ///            Ok(Hash::new([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])));
+    /// ```
+    ///
+    /// ---
+    ///
+    /// TODO: Allow smaller hash input (`42` = `0000000000000042`)
+    fn from_str(s: &str) -> Result<Hash, HashParseError> {
+        if let Some(s) = s.as_bytes().get(0..(HASH_SIZE * 2)) {
+            let mut hash = [0; HASH_SIZE];
+            for i in 0..HASH_SIZE {
+                if let (Some(upper), Some(lower)) =
+                    ((s[i * 2] as char).to_digit(16), (s[i * 2 + 1] as char).to_digit(16)) {
+                    hash[i] = (lower + (upper << 4)) as u8;
+                } else {
+                    return Err(HashParseError);
+                }
+            }
+            Ok(Hash::new(hash))
+        } else {
+            Err(HashParseError)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashParseError;
+
+impl fmt::Display for HashParseError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str(self.description())
+    }
+}
+
+impl Error for HashParseError {
+    fn description(&self) -> &str {
+        "invalid hash syntax"
     }
 }
 
@@ -97,6 +119,13 @@ pub struct Payload(pub Vec<u8>);
 impl Default for Payload {
     fn default() -> Self {
         Payload(Vec::new())
+    }
+}
+
+impl FromStr for Payload {
+    type Err = io::Error;
+    fn from_str(s: &str) -> Result<Payload, io::Error> {
+        Ok(Payload(s.as_bytes().to_vec()))
     }
 }
 
