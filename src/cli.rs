@@ -83,7 +83,7 @@ pub enum CLI {
 pub fn prompt<'a>(
     state: &'a ServerState,
     handle: &'a Handle,
-) -> Box<Future<Item = (), Error = io::Error> + 'a> {
+) -> Box<Future<Item = (), Error = ()> + 'a> {
     let (sender, receiver) = channel(1);
 
     let mut rl = Editor::<()>::new();
@@ -126,23 +126,19 @@ pub fn prompt<'a>(
     });
 
     let (sender2, receiver2) = channel::<Message>(10);
-    let pipe_future = receiver
-        .for_each(move |value| {
-            let f = sender2
-                .clone()
-                .sink_map_err(|_| ())
-                .send_all(state.process(value.to_message()))
-                .map(|_| ());
-            handle.spawn(f);
-            Ok(())
-        })
-        .map_err(|_| io::Error::from(io::ErrorKind::Other));
+    let pipe_future = receiver.for_each(move |value| {
+        let f = sender2
+            .clone()
+            .sink_map_err(|_| ())
+            .send_all(state.process(value.to_message()))
+            .map(|_| ());
+        handle.spawn(f);
+        Ok(())
+    });
 
-    let messages_future = receiver2
-        .for_each(|msg| {
-            println!("Got message {:?}", msg);
-            Ok(())
-        })
-        .map_err(|_| io::Error::from(io::ErrorKind::Other));
+    let messages_future = receiver2.for_each(|msg| {
+        println!("Got message {:?}", msg);
+        Ok(())
+    });
     Box::new(pipe_future.join(messages_future).map(|_| ()))
 }

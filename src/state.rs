@@ -1,4 +1,3 @@
-use std::io;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::cell::RefCell;
@@ -118,10 +117,6 @@ impl ServerState {
                 self.requests.borrow_mut().fullfill(&self.hashes.borrow());
                 return Box::new(
                     req.map(move |payload| Message::Put(hash, payload))
-                        .map(|e| {
-                            println!("Request fullfilled {:?}", e);
-                            e
-                        })
                         .into_stream()
                         .map_err(|e| println!("{:?}", e)),
                 );
@@ -171,7 +166,7 @@ impl ServerState {
         self.hashes.borrow_mut().contains(hash)
     }
 
-    pub fn run(&self) -> Box<Future<Item = (), Error = io::Error>> {
+    pub fn run(&self) -> Box<Future<Item = (), Error = ()>> {
         let listeners = Arc::clone(&self.listeners);
         let hashes = Arc::clone(&self.hashes);
         let requests = Arc::clone(&self.requests);
@@ -179,15 +174,12 @@ impl ServerState {
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
         let timer_stream = interval.map_err(TimerError::into).and_then(move |_| {
-            // println!("{:?}", hashes.borrow());
-            // println!("{:?}", requests.borrow());
-            // println!("{:?}", listeners.borrow());
             hashes.borrow_mut().cleanup();
             requests.borrow_mut().fullfill(&hashes.borrow());
             listeners
                 .borrow_mut()
                 .broadcast(&Message::KeepAlive)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+                .map_err(|e| println!("Could not broadcast KeepAlive: {}", e))
         });
         Box::new(timer_stream.for_each(|_| future::ok(())))
     }

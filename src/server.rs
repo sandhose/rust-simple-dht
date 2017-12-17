@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::cell::RefCell;
-use futures::{future, stream, Future, Sink, Stream};
+use futures::{Future, Sink, Stream};
 use futures::sync::mpsc;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
@@ -72,12 +72,14 @@ pub fn listen<'a>(
     state: &'a ServerState,
     addr: &SocketAddr,
     handle: &'a Handle,
-) -> Box<Future<Item = (), Error = io::Error> + 'a> {
-    let socket = try_to_future!(UdpSocket::bind(&addr, handle));
+) -> Box<Future<Item = (), Error = ()> + 'a> {
+    let socket = UdpSocket::bind(&addr.clone(), handle).unwrap();
 
-    println!("Listening on {}", try_to_future!(socket.local_addr()));
+    println!("Listening on {}", socket.local_addr().unwrap());
 
-    let (sink, stream) = socket.framed(UdpMessage).split();
+    let (output_sink, input_stream) = socket.framed(UdpMessage).split();
+
+    let output_sink = output_sink.sink_map_err(|e| println!("Error sending message: {}", e));
 
     let shared_peers: Arc<PeerStore> = Arc::default();
 
@@ -85,51 +87,51 @@ pub fn listen<'a>(
 
     let peers = Arc::clone(&shared_peers);
     let br_sender = sender.clone();
-    let broadcast_stream = state
-        .subscribe()
-        .map_err(|_| io::Error::from(io::ErrorKind::Other))
-        .for_each(move |msg| {
-            peers.cleanup();
+    let broadcast_future = state.subscribe().for_each(move |msg| {
+        peers.cleanup();
 
-            if let Message::Discover(addr) = msg {
-                peers.probe(addr);
-                return Ok(());
-            }
+        if let Message::Discover(addr) = msg {
+            peers.probe(addr);
+            return Ok(());
+        }
 
-            if peers.len() > 0 {
-                println!("Broadcasting {:?} to {:?}", msg, peers);
-            }
+        if peers.len() > 0 {
+            println!("Broadcasting {:?} to {:?}", msg, peers);
+        }
 
-            for address in peers.addresses() {
-                handle.spawn(
-                    br_sender
-                        .clone()
-                        .send((address, msg.clone()))
-                        .map_err(|_| ())
-                        .map(|_| ()),
-                );
-            }
+        for address in peers.addresses() {
+            handle.spawn(
+                br_sender
+                    .clone()
+                    .send((address, msg.clone()))
+                    .map_err(|e| println!("Error broadcasting mesasge: {}", e))
+                    .map(|_| ()),
+            );
+        }
 
-            Ok(())
-        });
-
-    let peers = Arc::clone(&shared_peers);
-    let server_stream = stream.for_each(move |(src, msg)| {
-        println!("Got message from {}: {:?}", src, msg);
-        peers.probe(src);
-        let f = state
-            .process(msg)
-            .map(move |msg| (src, msg))
-            .map_err(|_| ())
-            .forward(sender.clone().sink_map_err(|_| ()))
-            .map(|_| ());
-        handle.spawn(f);
         Ok(())
     });
 
-    Box::new(
-        sink.send_all(receiver.map_err(|_| io::Error::from(io::ErrorKind::Other)))
-            .join3(server_stream, broadcast_stream)
+    let peers = Arc::clone(&shared_peers);
+    let server_future = input_stream
+        .for_each(move |(src, msg)| {
+            println!("Got message from {}: {:?}", src, msg);
+            peers.probe(src);
+            let messages = state.process(msg).map(move |msg| (src, msg));
+            let f = sender
+                .clone()
+                .sink_map_err(|e| println!("Error sending message: {}", e))
+                .send_all(messages);
+            handle.spawn(f.map(|_| ()));
+            Ok(())
+        })
+        .map_err(|e| println!("Error processing message: {}", e));
+
+    let send_future = receiver.forward(output_sink);
+
+    return Box::new(
+        send_future
+            .join3(server_future, broadcast_future)
             .map(|_| ()),
-    )
+    );
 }

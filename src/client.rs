@@ -8,7 +8,7 @@ use tokio_core::reactor::Handle;
 use messages::{Message, UdpMessage};
 
 pub fn request(
-    &server: &SocketAddr,
+    server: &SocketAddr,
     msg: Message,
     handle: &Handle,
 ) -> Box<Future<Item = Message, Error = io::Error>> {
@@ -27,7 +27,7 @@ pub fn request(
     };
 
     let (sink, stream) = socket.framed(UdpMessage).split();
-    let send_future = sink.send((server, msg));
+    let send_future = sink.send((*server, msg));
     // TODO: Do not clone, and check the message somehow
     let recv_future = stream.take(1).collect().map(|v| v[0].1.clone());
 
