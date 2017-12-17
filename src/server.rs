@@ -10,7 +10,7 @@ use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
 use messages::{Message, UdpMessage};
-use state::ServerState;
+use state::State;
 
 static TTL: u64 = 10;
 
@@ -69,7 +69,7 @@ impl Peer {
 }
 
 pub fn listen<'a>(
-    state: &'a ServerState,
+    state: &'a State,
     addr: &SocketAddr,
     handle: &'a Handle,
 ) -> Box<Future<Item = (), Error = ()> + 'a> {

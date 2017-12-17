@@ -145,13 +145,13 @@ impl Future for HashRequest {
 }
 
 #[derive(Default, Debug)]
-pub struct ServerState {
+pub struct State {
     listeners: Arc<RefCell<Listeners>>,
     hashes: Arc<RefCell<HashStore>>,
     requests: Arc<RefCell<Requests>>,
 }
 
-impl ServerState {
+impl State {
     /// Process a Message, returning a Stream of Messages to respond
     pub fn process(&self, msg: Message) -> Box<Stream<Item = Message, Error = ()>> {
         println!("Processing msg {:?}", msg);
@@ -232,14 +232,14 @@ impl ServerState {
 
 #[cfg(test)]
 mod tests {
-    use super::ServerState;
+    use super::State;
     use std::str::FromStr;
     use futures::{Async, Stream};
     use messages::{Hash, Message, Payload};
 
     #[test]
     fn store_hashes() {
-        let state = ServerState::default();
+        let state = State::default();
         let hash = Hash::from_str("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
         assert_eq!(state.get(&hash.clone()), None);
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn process_messages() {
-        let state = ServerState::default();
+        let state = State::default();
         let hash = Hash::from_str("0123456789abcdef").unwrap();
         let content = vec![24, 8, 42, 12];
         let mut listener = state.subscribe();

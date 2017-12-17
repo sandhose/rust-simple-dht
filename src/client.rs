@@ -6,13 +6,13 @@ use futures::IntoFuture;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
-use state::ServerState;
+use state::State;
 use messages::{Message, UdpMessage};
 
 pub fn request<'a>(
     server: &SocketAddr,
     msg: Message,
-    state: &'a ServerState,
+    state: &'a State,
     handle: &'a Handle,
 ) -> Box<Future<Item = (), Error = ()> + 'a> {
     // Bind on either the v6 or the v4 wildcard address based on server's address

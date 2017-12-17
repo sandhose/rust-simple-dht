@@ -12,7 +12,7 @@ use structopt::StructOpt;
 
 use simple_dht::messages::Message;
 use simple_dht::server;
-use simple_dht::state::ServerState;
+use simple_dht::state::State;
 use simple_dht::client;
 use simple_dht::cli;
 
@@ -20,7 +20,7 @@ fn main() {
     let args = cli::CLI::from_args();
     println!("{:?}", args);
 
-    let state = ServerState::default();
+    let state = State::default();
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 

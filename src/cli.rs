@@ -14,7 +14,7 @@ use tokio_core::reactor::Handle;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
 
-use state::ServerState;
+use state::State;
 use messages::{Hash, Message, Payload};
 
 // FIXME: i don't like this
@@ -81,7 +81,7 @@ pub enum CLI {
 }
 
 pub fn prompt<'a>(
-    state: &'a ServerState,
+    state: &'a State,
     handle: &'a Handle,
 ) -> Box<Future<Item = (), Error = ()> + 'a> {
     let (sender, receiver) = channel(1);
