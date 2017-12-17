@@ -1,5 +1,8 @@
 extern crate clap;
+extern crate env_logger;
 extern crate futures;
+#[macro_use]
+extern crate log;
 extern crate structopt;
 extern crate tokio_core;
 
@@ -17,8 +20,9 @@ use simple_dht::client;
 use simple_dht::cli;
 
 fn main() {
+    env_logger::init().unwrap();
     let args = cli::CLI::from_args();
-    println!("{:?}", args);
+    debug!("CLI called {:?}", args);
 
     let state = State::default();
     let mut core = Core::new().unwrap();
@@ -35,6 +39,7 @@ fn main() {
             futures.push(state.run());
 
             let stream = futures_unordered(futures);
+            debug!("Starting event loop");
             core.run(stream.collect()).unwrap();
         }
         cli::CLI::Client { connect, command } => {

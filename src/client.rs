@@ -1,5 +1,4 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::io;
 use futures::{Future, Sink, Stream};
 use futures::sync::mpsc;
 use futures::IntoFuture;
@@ -30,13 +29,13 @@ pub fn request<'a>(
 
     let (output_sink, input_stream) = socket.framed(UdpMessage).split();
 
-    let output_sink = output_sink.sink_map_err(|e| println!("Error sending message: {}", e));
+    let output_sink = output_sink.sink_map_err(|e| error!("Error sending message: {}", e));
 
     handle.spawn(
         sender
             .clone()
             .send((*server, msg))
-            .map_err(|e| println!("Could not send message: {}", e))
+            .map_err(|e| error!("Could not send message: {}", e))
             .map(|_| ()),
     );
 
@@ -45,12 +44,12 @@ pub fn request<'a>(
             let messages = state.process(msg).map(move |msg| (src, msg));
             let f = sender
                 .clone()
-                .sink_map_err(|e| println!("Error sending message: {}", e))
+                .sink_map_err(|e| error!("Error sending message: {}", e))
                 .send_all(messages);
             handle.spawn(f.map(|_| ()));
             Ok(())
         })
-        .map_err(|e| println!("Error processing message: {}", e));
+        .map_err(|e| error!("Error processing message: {}", e));
 
     let send_future = receiver.forward(output_sink);
 

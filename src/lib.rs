@@ -1,5 +1,6 @@
-#[macro_use]
 extern crate futures;
+#[macro_use]
+extern crate log;
 extern crate rustyline;
 extern crate shlex;
 extern crate structopt;
@@ -7,9 +8,6 @@ extern crate structopt;
 extern crate structopt_derive;
 extern crate tokio_core;
 extern crate tokio_timer;
-
-#[macro_use]
-mod utils;
 
 pub mod messages;
 pub mod state;

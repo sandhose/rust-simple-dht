@@ -61,7 +61,7 @@ impl FromStr for Hash {
     /// ```
     fn from_str(s: &str) -> Result<Hash, HashParseError> {
         let count = s.chars().count();
-        if count >= HASH_SIZE * 2 {
+        if count > HASH_SIZE * 2 {
             return Err(HashParseError);
         }
 

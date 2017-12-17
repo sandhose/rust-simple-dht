@@ -8,7 +8,7 @@ use std::net::ToSocketAddrs;
 
 use shlex;
 use structopt::StructOpt;
-use futures::{future, Future, Sink, Stream};
+use futures::{Future, Sink, Stream};
 use futures::sync::mpsc::channel;
 use tokio_core::reactor::Handle;
 use rustyline::Editor;
@@ -80,10 +80,7 @@ pub enum CLI {
     },
 }
 
-pub fn prompt<'a>(
-    state: &'a State,
-    handle: &'a Handle,
-) -> Box<Future<Item = (), Error = ()> + 'a> {
+pub fn prompt<'a>(state: &'a State, handle: &'a Handle) -> Box<Future<Item = (), Error = ()> + 'a> {
     let (sender, receiver) = channel(1);
 
     let mut rl = Editor::<()>::new();
@@ -137,7 +134,7 @@ pub fn prompt<'a>(
     });
 
     let messages_future = receiver2.for_each(|msg| {
-        println!("Got message {:?}", msg);
+        println!("Response: {:?}", msg);
         Ok(())
     });
     Box::new(pipe_future.join(messages_future).map(|_| ()))
