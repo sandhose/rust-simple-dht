@@ -73,7 +73,7 @@ pub fn listen<'a>(
     addr: &SocketAddr,
     handle: &'a Handle,
 ) -> Box<Future<Item = (), Error = ()> + 'a> {
-    let socket = UdpSocket::bind(&addr.clone(), handle).unwrap();
+    let socket = UdpSocket::bind(&addr.clone(), handle).expect("Could not bind socket");
 
     println!("Listening on {}", socket.local_addr().unwrap());
 

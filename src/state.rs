@@ -1,9 +1,8 @@
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
-use futures::stream;
-use futures::{future, Future, Stream};
+use futures::{future, stream, task, Async, Future, Poll, Stream};
 use futures::sync::mpsc;
 use futures::sync::oneshot;
 use tokio_timer::{Timer, TimerError};
@@ -78,24 +77,70 @@ impl Listeners {
 }
 
 #[derive(Default, Debug)]
-struct Requests(HashMap<Hash, Vec<oneshot::Sender<Payload>>>);
+struct Requests(HashMap<Hash, Vec<HashRequest>>);
 
 impl Requests {
-    pub fn request(&mut self, hash: Hash) -> oneshot::Receiver<Payload> {
-        let (sender, receiver) = oneshot::channel();
-        self.0.entry(hash).or_insert_with(Vec::new).push(sender);
-        receiver
+    pub fn request(&mut self, hash: Hash) -> HashRequest {
+        let request = HashRequest::default();
+        self.0
+            .entry(hash)
+            .or_insert_with(Vec::new)
+            .push(request.clone());
+        request
     }
 
     pub fn fullfill(&mut self, store: &HashStore) {
         for hash in store.list() {
-            if let Some(senders) = self.0.remove(hash) {
+            if let Some(requests) = self.0.remove(hash) {
                 // FIXME: are those unwrap safe?
                 let payload = Payload(store.get(hash).unwrap());
-                for sender in senders {
-                    sender.send(payload.clone()).unwrap();
+                for mut request in requests {
+                    request.fullfill(payload.clone());
                 }
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HashRequest {
+    task: Arc<RefCell<Option<task::Task>>>,
+    inner: Arc<RefCell<Option<Payload>>>,
+}
+
+impl HashRequest {
+    pub fn fullfill(&mut self, payload: Payload) {
+        if let Some(ref task) = *self.task.borrow() {
+            task.notify();
+        }
+
+        *self.inner.borrow_mut() = Some(payload);
+    }
+}
+
+impl Default for HashRequest {
+    fn default() -> Self {
+        HashRequest {
+            task: Arc::from(RefCell::from(None)),
+            inner: Arc::from(RefCell::from(None)),
+        }
+    }
+}
+
+impl Future for HashRequest {
+    type Item = Payload;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Payload, ()> {
+        println!("Polled.");
+        if self.task.borrow().is_none() {
+            *self.task.borrow_mut() = Some(task::current());
+        }
+
+        if let Some(ref payload) = *self.inner.borrow() {
+            Ok(Async::Ready(payload.clone()))
+        } else {
+            Ok(Async::NotReady)
         }
     }
 }
@@ -150,7 +195,7 @@ impl ServerState {
         self.listeners.borrow_mut().subscribe()
     }
 
-    fn request(&self, hash: Hash) -> oneshot::Receiver<Payload> {
+    pub fn request(&self, hash: Hash) -> HashRequest {
         self.requests.borrow_mut().request(hash)
     }
 
