@@ -1,13 +1,8 @@
-use std::sync::Arc;
-use std::cell::RefCell;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use futures::{Future, Sink, Stream};
-use futures::sync::oneshot;
-use futures::IntoFuture;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
-use state::State;
 use messages::{Message, UdpMessage};
 
 pub fn request<'a>(
