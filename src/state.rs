@@ -132,7 +132,6 @@ impl Future for HashRequest {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Payload, ()> {
-        println!("Polled.");
         if self.task.borrow().is_none() {
             *self.task.borrow_mut() = Some(task::current());
         }
@@ -168,6 +167,7 @@ impl ServerState {
             }
             Message::Put(hash, Payload(p)) => {
                 self.put(&hash, p);
+                self.requests.borrow_mut().fullfill(&self.hashes.borrow());
                 self.broadcast(&Message::IHave(hash)).unwrap();
                 None
             }

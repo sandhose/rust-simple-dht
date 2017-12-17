@@ -6,11 +6,11 @@ extern crate tokio_core;
 extern crate simple_dht;
 
 use futures::stream::futures_unordered;
-use futures::Stream;
+use futures::{Future, Stream};
 use tokio_core::reactor::Core;
 use structopt::StructOpt;
-use std::iter;
 
+use simple_dht::messages::Message;
 use simple_dht::server;
 use simple_dht::state::ServerState;
 use simple_dht::client;
@@ -20,28 +20,38 @@ fn main() {
     let args = cli::CLI::from_args();
     println!("{:?}", args);
 
+    let state = ServerState::default();
     let mut core = Core::new().unwrap();
+    let handle = core.handle();
+
     match args {
         cli::CLI::Server { bind } => {
-            let handle = core.handle();
-            let state = ServerState::default();
-            let server_futures = bind.0
+            let mut futures: Vec<_> = bind.0
                 .into_iter()
-                .map(|addr| server::listen(&state, &addr, &handle));
-            let prompt_future = cli::prompt(&state, &handle);
-            let state_future = state.run();
-            let stream = futures_unordered(
-                server_futures
-                    .chain(iter::once(prompt_future))
-                    .chain(iter::once(state_future)),
-            );
+                .map(|addr| server::listen(&state, &addr, &handle))
+                .collect();
+
+            futures.push(cli::prompt(&state, &handle));
+            futures.push(state.run());
+
+            let stream = futures_unordered(futures);
             core.run(stream.collect()).unwrap();
         }
         cli::CLI::Client { connect, command } => {
-            // FIXME: try multiple addresses?
-            let future = client::request(&connect.0[0], command.to_message(), &core.handle());
-            let resp = core.run(future).unwrap();
-            println!("{:?}", resp);
+            let msg = command.to_message();
+            let future = client::request(&connect.0[0], msg.clone(), &state, &handle);
+
+            if let Message::Get(hash) = msg {
+                let req_future = state.request(hash).map(|payload| {
+                    println!("{:?}", payload);
+                });
+
+                handle.spawn(req_future);
+
+                core.run(future).unwrap();
+            } else {
+                core.run(future).unwrap();
+            }
         }
     }
 }
