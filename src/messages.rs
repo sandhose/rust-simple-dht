@@ -134,6 +134,12 @@ impl Default for Payload {
     }
 }
 
+impl fmt::Display for Payload {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", String::from_utf8_lossy(self.0.as_slice()))
+    }
+}
+
 impl FromStr for Payload {
     type Err = io::Error;
     fn from_str(s: &str) -> Result<Payload, io::Error> {

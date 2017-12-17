@@ -34,7 +34,7 @@ pub fn request<'a>(
     handle.spawn(
         sender
             .clone()
-            .send((*server, msg))
+            .send((*server, msg.clone()))
             .map_err(|e| error!("Could not send message: {}", e))
             .map(|_| ()),
     );
@@ -53,5 +53,18 @@ pub fn request<'a>(
 
     let send_future = receiver.forward(output_sink);
 
-    Box::new((send_future, recv_future).into_future().map(|_| ()))
+    if let Message::Get(hash) = msg {
+        let request = state.request(hash).map(|payload| {
+            println!("{}", payload);
+        });
+
+        Box::new(
+            request
+                .select((recv_future, send_future).into_future().map(|_| ()))
+                .map(|_| ())
+                .map_err(|_| ()),
+        )
+    } else {
+        Box::new((send_future, recv_future).into_future().map(|_| ()))
+    }
 }
