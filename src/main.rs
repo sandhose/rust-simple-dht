@@ -28,7 +28,7 @@ fn main() {
             let server_futures = bind.0
                 .into_iter()
                 .map(|addr| server::listen(&state, &addr, &handle));
-            let prompt_future = cli::prompt(&state);
+            let prompt_future = cli::prompt(&state, &handle);
             let state_future = state.run();
             let stream = futures_unordered(
                 server_futures

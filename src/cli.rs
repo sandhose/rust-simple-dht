@@ -10,6 +10,7 @@ use shlex;
 use structopt::StructOpt;
 use futures::{future, Future, Sink, Stream};
 use futures::sync::mpsc::channel;
+use tokio_core::reactor::Handle;
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
 
@@ -79,7 +80,10 @@ pub enum CLI {
     },
 }
 
-pub fn prompt<'a>(state: &'a ServerState) -> Box<Future<Item = (), Error = io::Error> + 'a> {
+pub fn prompt<'a>(
+    state: &'a ServerState,
+    handle: &'a Handle,
+) -> Box<Future<Item = (), Error = io::Error> + 'a> {
     let (sender, receiver) = channel(1);
 
     let mut rl = Editor::<()>::new();
@@ -121,15 +125,24 @@ pub fn prompt<'a>(state: &'a ServerState) -> Box<Future<Item = (), Error = io::E
         }
     });
 
-    Box::new(
-        receiver
-            .map(move |value| state.process(value.to_message()))
-            .flatten()
-            .map_err(|_| io::Error::from(io::ErrorKind::Other))
-            .for_each(|value| {
-                // TODO: pretty-print this.
-                println!("Got response: {:?}", value);
-                future::ok(())
-            }),
-    )
+    let (sender2, receiver2) = channel::<Message>(10);
+    let pipe_future = receiver
+        .for_each(move |value| {
+            let f = sender2
+                .clone()
+                .sink_map_err(|_| ())
+                .send_all(state.process(value.to_message()))
+                .map(|_| ());
+            handle.spawn(f);
+            Ok(())
+        })
+        .map_err(|_| io::Error::from(io::ErrorKind::Other));
+
+    let messages_future = receiver2
+        .for_each(|msg| {
+            println!("Got message {:?}", msg);
+            Ok(())
+        })
+        .map_err(|_| io::Error::from(io::ErrorKind::Other));
+    Box::new(pipe_future.join(messages_future).map(|_| ()))
 }

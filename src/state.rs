@@ -3,9 +3,10 @@ use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::sync::Arc;
-use futures::stream::iter_ok;
+use futures::stream;
 use futures::{future, Future, Stream};
-use futures::sync::mpsc::{channel, Receiver, Sender, TrySendError};
+use futures::sync::mpsc;
+use futures::sync::oneshot;
 use tokio_timer::{Timer, TimerError};
 
 use messages::{Hash, Message, Payload};
@@ -49,16 +50,20 @@ impl HashStore {
         self.hashes.contains_key(hash)
     }
 
+    pub fn list(&self) -> Vec<&Hash> {
+        self.hashes.keys().collect()
+    }
+
     pub fn cleanup(&mut self) {
         self.hashes.retain(|_, content| !content.is_stale());
     }
 }
 
-#[derive(Default)]
-struct Listeners(Vec<Sender<Message>>);
+#[derive(Default, Debug)]
+struct Listeners(Vec<mpsc::Sender<Message>>);
 
 impl Listeners {
-    pub fn broadcast(&mut self, msg: &Message) -> Result<(), TrySendError<Message>> {
+    pub fn broadcast(&mut self, msg: &Message) -> Result<(), mpsc::TrySendError<Message>> {
         for listener in self.0.as_mut_slice() {
             listener.try_send(msg.clone())?;
         }
@@ -66,25 +71,61 @@ impl Listeners {
         Ok(())
     }
 
-    pub fn subscribe(&mut self) -> Receiver<Message> {
-        let (sender, receiver) = channel(1);
+    pub fn subscribe(&mut self) -> mpsc::Receiver<Message> {
+        let (sender, receiver) = mpsc::channel(1);
         self.0.push(sender);
         receiver
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
+struct Requests(HashMap<Hash, Vec<oneshot::Sender<Payload>>>);
+
+impl Requests {
+    pub fn request(&mut self, hash: Hash) -> oneshot::Receiver<Payload> {
+        let (sender, receiver) = oneshot::channel();
+        self.0.entry(hash).or_insert_with(Vec::new).push(sender);
+        receiver
+    }
+
+    pub fn fullfill(&mut self, store: &HashStore) {
+        for hash in store.list() {
+            if let Some(senders) = self.0.remove(hash) {
+                // FIXME: are those unwrap safe?
+                let payload = Payload(store.get(hash).unwrap());
+                for sender in senders {
+                    sender.send(payload.clone()).unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default, Debug)]
 pub struct ServerState {
     listeners: Arc<RefCell<Listeners>>,
     hashes: Arc<RefCell<HashStore>>,
+    requests: Arc<RefCell<Requests>>,
 }
 
 impl ServerState {
     /// Process a Message, returning a Stream of Messages to respond
     pub fn process(&self, msg: Message) -> Box<Stream<Item = Message, Error = ()>> {
+        println!("Processing msg {:?}", msg);
         let opt = match msg {
-            Message::Get(hash) => self.get(&hash)
-                .map(|content| Message::Put(hash, Payload(content))),
+            Message::Get(hash) => {
+                let req = self.request(hash.clone());
+                self.requests.borrow_mut().fullfill(&self.hashes.borrow());
+                return Box::new(
+                    req.map(move |payload| Message::Put(hash, payload))
+                        .map(|e| {
+                            println!("Request fullfilled {:?}", e);
+                            e
+                        })
+                        .into_stream()
+                        .map_err(|e| println!("{:?}", e)),
+                );
+            }
             Message::Put(hash, Payload(p)) => {
                 self.put(&hash, p);
                 self.broadcast(&Message::IHave(hash)).unwrap();
@@ -99,26 +140,30 @@ impl ServerState {
         };
 
         // TODO: error handling
-        if let Some(out) = opt {
-            Box::new(iter_ok(vec![out]))
+        if let Some(msg) = opt {
+            Box::new(stream::once(Ok(msg)))
         } else {
-            Box::new(iter_ok(Vec::new()))
+            Box::new(stream::empty())
         }
     }
 
-    pub fn broadcast(&self, msg: &Message) -> Result<(), TrySendError<Message>> {
+    pub fn broadcast(&self, msg: &Message) -> Result<(), mpsc::TrySendError<Message>> {
         self.listeners.borrow_mut().broadcast(msg)
     }
 
-    pub fn subscribe(&self) -> Receiver<Message> {
+    pub fn subscribe(&self) -> mpsc::Receiver<Message> {
         self.listeners.borrow_mut().subscribe()
     }
 
-    fn put(&self, hash: &Hash, data: Vec<u8>) {
+    fn request(&self, hash: Hash) -> oneshot::Receiver<Payload> {
+        self.requests.borrow_mut().request(hash)
+    }
+
+    pub fn put(&self, hash: &Hash, data: Vec<u8>) {
         self.hashes.borrow_mut().put(hash, data);
     }
 
-    fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
+    pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
         self.hashes.borrow_mut().get(hash)
     }
 
@@ -129,11 +174,16 @@ impl ServerState {
     pub fn run(&self) -> Box<Future<Item = (), Error = io::Error>> {
         let listeners = Arc::clone(&self.listeners);
         let hashes = Arc::clone(&self.hashes);
+        let requests = Arc::clone(&self.requests);
 
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
         let timer_stream = interval.map_err(TimerError::into).and_then(move |_| {
+            // println!("{:?}", hashes.borrow());
+            // println!("{:?}", requests.borrow());
+            // println!("{:?}", listeners.borrow());
             hashes.borrow_mut().cleanup();
+            requests.borrow_mut().fullfill(&hashes.borrow());
             listeners
                 .borrow_mut()
                 .broadcast(&Message::KeepAlive)
