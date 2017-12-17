@@ -1,6 +1,8 @@
+use std::sync::Arc;
+use std::cell::RefCell;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use futures::{Future, Sink, Stream};
-use futures::sync::mpsc;
+use futures::sync::oneshot;
 use futures::IntoFuture;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
@@ -10,8 +12,7 @@ use messages::{Message, UdpMessage};
 
 pub fn request<'a>(
     server: &SocketAddr,
-    msg: Message,
-    state: &'a State,
+    req: Message,
     handle: &'a Handle,
 ) -> Box<Future<Item = (), Error = ()> + 'a> {
     // Bind on either the v6 or the v4 wildcard address based on server's address
@@ -23,48 +24,40 @@ pub fn request<'a>(
         panic!("Address isn't v4 nor v6")
     };
 
-    let (sender, receiver) = mpsc::channel(10);
-
     let socket = UdpSocket::bind(&bind, handle).expect("Could not bind socket");
 
     let (output_sink, input_stream) = socket.framed(UdpMessage).split();
 
-    let output_sink = output_sink.sink_map_err(|e| error!("Error sending message: {}", e));
-
-    handle.spawn(
-        sender
-            .clone()
-            .send((*server, msg.clone()))
-            .map_err(|e| error!("Could not send message: {}", e))
-            .map(|_| ()),
-    );
+    let send_future = output_sink
+        .send((*server, req.clone()))
+        .map_err(|e| error!("Could not send message: {}", e))
+        .map(|_| ());
 
     let recv_future = input_stream
-        .for_each(move |(src, msg)| {
-            let messages = state.process(msg).map(move |msg| (src, msg));
-            let f = sender
-                .clone()
-                .sink_map_err(|e| error!("Error sending message: {}", e))
-                .send_all(messages);
-            handle.spawn(f.map(|_| ()));
-            Ok(())
+        .filter(move |&(_, ref resp)| {
+            match req {
+                Message::Get(hash) => {
+                    if let &Message::Put(hash2, ref payload) = resp {
+                        if hash == hash2 {
+                            println!("{}", payload);
+                            return true;
+                        }
+                    }
+                }
+                Message::Put(hash, _) => {
+                    if let &Message::IHave(hash2) = resp {
+                        if hash == hash2 {
+                            return true;
+                        }
+                    }
+                }
+                _ => unimplemented!(),
+            };
+            false
         })
+        .take(1)
+        .collect()
         .map_err(|e| error!("Error processing message: {}", e));
 
-    let send_future = receiver.forward(output_sink);
-
-    if let Message::Get(hash) = msg {
-        let request = state.request(hash).map(|payload| {
-            println!("{}", payload);
-        });
-
-        Box::new(
-            request
-                .select((recv_future, send_future).into_future().map(|_| ()))
-                .map(|_| ())
-                .map_err(|_| ()),
-        )
-    } else {
-        Box::new((send_future, recv_future).into_future().map(|_| ()))
-    }
+    Box::new(recv_future.join(send_future).map(|_| ()).map_err(|_| ()))
 }
