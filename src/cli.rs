@@ -17,7 +17,6 @@ use rustyline::error::ReadlineError;
 use state::State;
 use messages::{Hash, Message, Payload};
 
-// FIXME: i don't like this
 #[derive(Debug)]
 pub struct Addrs(pub Vec<SocketAddr>);
 
@@ -28,6 +27,8 @@ impl FromStr for Addrs {
     }
 }
 
+/// Client subcommand
+/// This one is also used in server interactive prompt
 #[derive(StructOpt, Debug)]
 pub enum ClientCommand {
     #[structopt(name = "get", display_order_raw = "1")]
@@ -62,6 +63,7 @@ impl ClientCommand {
     }
 }
 
+/// Simple Distributed Hash Table
 #[derive(StructOpt, Debug)]
 pub enum CLI {
     #[structopt(name = "server")]
@@ -80,10 +82,13 @@ pub enum CLI {
     },
 }
 
+/// Show a prompt to directly interract with the server state, using the client subcommand
 pub fn prompt<'a>(state: &'a State, handle: &'a Handle) -> Box<Future<Item = (), Error = ()> + 'a> {
+    // Server responses are sent through this channel
     let (sender, receiver) = channel(1);
 
     let mut rl = Editor::<()>::new();
+    // The prompt is spawned in a new thread because rustyline isn't futures-aware
     thread::spawn(move || loop {
         // FIXME: clean up this mess
         let readline = rl.readline(">> ");
@@ -111,7 +116,8 @@ pub fn prompt<'a>(state: &'a State, handle: &'a Handle) -> Box<Future<Item = (),
                 };
             }
             Err(ReadlineError::Interrupted) => {
-                println!("(EOF to exit)");
+                // TODO: gracefully exit
+                process::exit(0);
             }
             Err(ReadlineError::Eof) => {
                 // TODO: gracefully exit
@@ -123,6 +129,7 @@ pub fn prompt<'a>(state: &'a State, handle: &'a Handle) -> Box<Future<Item = (),
     });
 
     let (sender2, receiver2) = channel::<Message>(10);
+    // Process each messages from prompt, and pipe the response in a new channel
     let pipe_future = receiver.for_each(move |value| {
         let f = sender2
             .clone()
@@ -133,7 +140,9 @@ pub fn prompt<'a>(state: &'a State, handle: &'a Handle) -> Box<Future<Item = (),
         Ok(())
     });
 
+    // Print each responses
     let messages_future = receiver2.for_each(|msg| {
+        // TODO: pretty print messages
         println!("Response: {:?}", msg);
         Ok(())
     });

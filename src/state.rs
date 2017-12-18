@@ -11,9 +11,12 @@ use messages::{Hash, Message, Payload};
 /// Time to live for peers and hashes, in seconds
 static TTL: u64 = 10;
 
+/// Stores one hash content
 #[derive(Debug, Clone)]
 struct Content {
+    /// Hash content
     data: Vec<u8>,
+    /// The last time this hash was seen
     pushed: Instant,
 }
 
@@ -25,21 +28,26 @@ impl Content {
         }
     }
 
+    /// Check if content is considered as stale
     fn is_stale(&self) -> bool {
         self.pushed.elapsed() > Duration::from_secs(TTL)
     }
 }
 
+/// Stores hashes
 #[derive(Debug, Default)]
 struct HashStore {
     hashes: HashMap<Hash, Content>,
 }
 
 impl HashStore {
+    /// Put a hash inside the store
+    /// Existing value will be overwritten
     pub fn put(&mut self, hash: &Hash, data: Vec<u8>) {
         self.hashes.insert(*hash, Content::from_buffer(data));
     }
 
+    /// Try to get a hash content from the store
     pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
         self.hashes.get(hash).map(|content| content.data.clone())
     }
@@ -48,19 +56,23 @@ impl HashStore {
         self.hashes.contains_key(hash)
     }
 
+    /// List known hashes
     pub fn list(&self) -> Vec<&Hash> {
         self.hashes.keys().collect()
     }
 
+    /// Cleanup stale hashes
     pub fn cleanup(&mut self) {
         self.hashes.retain(|_, content| !content.is_stale());
     }
 }
 
+/// Stores listeners to broadcast messages
 #[derive(Default, Debug)]
 struct Listeners(Vec<mpsc::Sender<Message>>);
 
 impl Listeners {
+    /// Broadcast a message to all listeners
     pub fn broadcast(&mut self, msg: &Message) -> Result<(), mpsc::TrySendError<Message>> {
         for listener in self.0.as_mut_slice() {
             listener.try_send(msg.clone())?;
@@ -69,6 +81,7 @@ impl Listeners {
         Ok(())
     }
 
+    /// Subscribe to broadcast messages
     pub fn subscribe(&mut self) -> mpsc::Receiver<Message> {
         let (sender, receiver) = mpsc::channel(1);
         self.0.push(sender);
@@ -76,11 +89,15 @@ impl Listeners {
     }
 }
 
+/// Stores pending hash requests
 #[derive(Default, Debug)]
 struct Requests(HashMap<Hash, Vec<HashRequest>>);
 
 impl Requests {
+    /// Request a Hash
+    /// The returned HashRequest is a future that resolves with the hash payload when found
     pub fn request(&mut self, hash: Hash) -> HashRequest {
+        // FIXME: timeout?
         let request = HashRequest::default();
         self.0
             .entry(hash)
@@ -89,31 +106,40 @@ impl Requests {
         request
     }
 
-    pub fn fullfill(&mut self, store: &HashStore) {
+    /// Fulfill requests from the store
+    pub fn fulfill(&mut self, store: &HashStore) {
         for hash in store.list() {
             if let Some(requests) = self.0.remove(hash) {
                 // FIXME: are those unwrap safe?
                 let payload = Payload(store.get(hash).unwrap());
                 for mut request in requests {
-                    request.fullfill(payload.clone());
+                    request.fulfill(payload.clone());
                 }
             }
         }
     }
 }
 
+/// A single request
 #[derive(Debug, Clone)]
 pub struct HashRequest {
+    // The current task in which the future is executed
+    // This is needed to trigger a poll when the request is fulfilled
     task: Arc<RefCell<Option<task::Task>>>,
+
+    // The payload, if it was fulfilled
     inner: Arc<RefCell<Option<Payload>>>,
 }
 
 impl HashRequest {
-    pub fn fullfill(&mut self, payload: Payload) {
+    /// Fulfill the request with a payload
+    pub fn fulfill(&mut self, payload: Payload) {
         if let Some(ref task) = *self.task.borrow() {
+            // tell the executor to poll this future
             task.notify();
         }
 
+        // Save payload content
         *self.inner.borrow_mut() = Some(payload);
     }
 }
@@ -133,6 +159,7 @@ impl Future for HashRequest {
 
     fn poll(&mut self) -> Poll<Payload, ()> {
         if self.task.borrow().is_none() {
+            // save the task, see HashRequest::fulfill
             *self.task.borrow_mut() = Some(task::current());
         }
 
@@ -144,10 +171,14 @@ impl Future for HashRequest {
     }
 }
 
+/// The server state
 #[derive(Default, Debug)]
 pub struct State {
+    /// Listeners subscribed to broadcasts
     listeners: Arc<RefCell<Listeners>>,
+    /// Where the hashes are stored
     hashes: Arc<RefCell<HashStore>>,
+    /// Pending hash requests
     requests: Arc<RefCell<Requests>>,
 }
 
@@ -157,8 +188,11 @@ impl State {
         let opt = match msg {
             Message::Get(hash) => {
                 info!("Message: GET {:?}", hash);
+                // Request the hash from the store
                 let req = self.request(hash.clone());
-                self.requests.borrow_mut().fullfill(&self.hashes.borrow());
+                // try to immediately fullfill the request
+                self.requests.borrow_mut().fulfill(&self.hashes.borrow());
+                // and stream it to the client
                 return Box::new(
                     req.map(move |payload| Message::Put(hash, payload))
                         .into_stream()
@@ -167,18 +201,23 @@ impl State {
             }
             Message::Put(hash, Payload(p)) => {
                 info!("Message: PUT {:?} [{} bytes]", hash, p.len());
+                // Put the hash in the store
                 self.put(&hash, p);
-                self.requests.borrow_mut().fullfill(&self.hashes.borrow());
+                self.requests.borrow_mut().fulfill(&self.hashes.borrow());
+                // and broadcast a notification to everyone
                 self.broadcast(&Message::IHave(hash)).unwrap();
                 None
             }
             Message::Discover(addr) => {
                 info!("Message: DISCOVER {}", addr);
+                // The listeners *should* intercept this DISCOVER message and add the new peer to
+                // their known peer list
                 self.broadcast(&msg).unwrap();
                 None
             }
             Message::IHave(hash) if !self.contains(&hash) => {
                 info!("Message: IHAVE {:?}", hash);
+                // Someone has a hash that I don't have: get it from him!
                 Some(Message::Get(hash))
             }
             m => {
@@ -194,22 +233,29 @@ impl State {
         }
     }
 
+    /// Broadcast a message to all listeners
     pub fn broadcast(&self, msg: &Message) -> Result<(), mpsc::TrySendError<Message>> {
         self.listeners.borrow_mut().broadcast(msg)
     }
 
+    /// Subscribe to broadcast messages
     pub fn subscribe(&self) -> mpsc::Receiver<Message> {
         self.listeners.borrow_mut().subscribe()
     }
 
+    /// Request a Hash
+    /// The returned HashRequest is a future that resolves with the hash payload when found
     pub fn request(&self, hash: Hash) -> HashRequest {
         self.requests.borrow_mut().request(hash)
     }
 
+    /// Put a hash inside the store
+    /// Existing value will be overwritten
     pub fn put(&self, hash: &Hash, data: Vec<u8>) {
         self.hashes.borrow_mut().put(hash, data);
     }
 
+    /// Try to get a hash content from the store
     pub fn get(&self, hash: &Hash) -> Option<Vec<u8>> {
         self.hashes.borrow_mut().get(hash)
     }
@@ -218,6 +264,7 @@ impl State {
         self.hashes.borrow_mut().contains(hash)
     }
 
+    /// Run the server loop
     pub fn run(&self) -> Box<Future<Item = (), Error = ()>> {
         debug!("Starting server loop");
         let listeners = Arc::clone(&self.listeners);
@@ -227,10 +274,11 @@ impl State {
         let timer = Timer::default();
         let interval = timer.interval(Duration::from_secs(1));
         let timer_stream = interval.map_err(TimerError::into).and_then(move |_| {
+            // This is run every second
             debug!("Tick.");
-            hashes.borrow_mut().cleanup();
-            requests.borrow_mut().fullfill(&hashes.borrow());
-            listeners
+            hashes.borrow_mut().cleanup(); // Cleanup stale hashes
+            requests.borrow_mut().fulfill(&hashes.borrow()); // Fulfill pending requests
+            listeners // and broadcast KeepAlive to everyone
                 .borrow_mut()
                 .broadcast(&Message::KeepAlive)
                 .map_err(|e| error!("Could not broadcast KeepAlive: {}", e))

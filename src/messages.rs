@@ -8,22 +8,27 @@ use std::net::{IpAddr, SocketAddr};
 use std::str;
 use tokio_core::net::UdpCodec;
 
+/// A Pushable object can be encoded and decoded from a frame
 pub trait Pushable {
     /// Push the value in the given frame
     fn push_in_frame(&self, frame: &mut Vec<u8>);
     /// Get the value length
     fn frame_len(&self) -> usize;
+    /// Pull the value from a slice of bytes
     fn pull(buf: &[u8]) -> Result<Self, DecodeError>
     where
         Self: Sized;
 }
 
+/// Utility macro to pull data from buffer
 macro_rules! pull {
     ($buf:expr, $range:expr) => {$buf.get($range).ok_or(DecodeError::MessageTooShort)}
 }
 
+/// Hashes are 8 bytes long
 const HASH_SIZE: usize = 8;
 
+/// Stores a hash
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Hash([u8; HASH_SIZE]);
 
@@ -125,6 +130,7 @@ impl fmt::Debug for Hash {
     }
 }
 
+/// The payload inside PUT messages
 #[derive(Debug, Clone, PartialEq)]
 pub struct Payload(pub Vec<u8>);
 
@@ -160,15 +166,18 @@ impl Pushable for Payload {
     }
 
     fn pull(buf: &[u8]) -> Result<Self, DecodeError> {
-        let length = try!(pull!(buf, 0..2));
+        // The first two bytes are the payload length
+        let length = pull!(buf, 0..2)?;
         let length = (u64::from(length[0]) << 8) + u64::from(length[1]);
-        let data = try!(pull!(buf, 2..(2 + length as usize)));
+        // the rest is the payload itself
+        let data = pull!(buf, 2..(2 + length as usize))?;
         let mut vec = Vec::with_capacity(length as usize);
         vec.extend_from_slice(data);
         Ok(Payload(vec))
     }
 }
 
+// The message type is stored as a u8
 impl Pushable for u8 {
     fn push_in_frame(&self, frame: &mut Vec<u8>) {
         frame.push(*self);
@@ -241,7 +250,7 @@ pub enum Message {
     Discover(SocketAddr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum DecodeError {
     MessageTooLong,
     MessageTooShort,
@@ -291,6 +300,7 @@ impl UdpCodec for UdpMessage {
     }
 }
 
+/// Build a message from list of parts
 macro_rules! build_msg {
     ($( $x:expr ),*) => ({
         let mut size = 0;
@@ -306,6 +316,13 @@ macro_rules! build_msg {
 }
 
 impl Message {
+    /// Serialize a message into a vector of bytes
+    ///
+    /// ```
+    /// use simple_dht::messages::Message;
+    /// let buf = Message::KeepAlive.serialize();
+    /// assert_eq!(buf, vec![2]);
+    /// ```
     pub fn serialize(&self) -> Vec<u8> {
         let id = self.type_identifier();
         match *self {
@@ -317,8 +334,15 @@ impl Message {
         }
     }
 
-    fn deserialize(buf: &[u8]) -> Result<Self, DecodeError> {
-        let id = try!(u8::pull(buf));
+    /// Deserialize a buffer into a message
+    ///
+    /// ```
+    /// use simple_dht::messages::Message;
+    /// let buf = &[2];
+    /// assert_eq!(Message::deserialize(buf), Ok(Message::KeepAlive));
+    /// ```
+    pub fn deserialize(buf: &[u8]) -> Result<Self, DecodeError> {
+        let id = u8::pull(buf)?;
 
         let msg = match id {
             0 => {
@@ -345,6 +369,7 @@ impl Message {
         Ok(msg)
     }
 
+    /// The message type -> id conversion
     fn type_identifier(&self) -> u8 {
         match *self {
             Message::Get(_) => 0,
