@@ -9,7 +9,7 @@ use tokio_timer::{Timer, TimerError};
 use messages::{Hash, Message, Payload};
 
 /// Time to live for peers and hashes, in seconds
-static TTL: u64 = 10;
+static TTL: u64 = 30;
 
 /// Stores one hash content
 #[derive(Debug, Clone)]
